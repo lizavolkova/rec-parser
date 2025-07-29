@@ -1,8 +1,6 @@
 """
-Clean ingredient parser using Python's built-in fractions module
-Converts unicode fractions for parsing, then back to unicode for display
-Updated with confidence threshold logic for fallback to original text
-Enhanced with ingredient validation to catch obvious parsing errors
+COMPLETE Enhanced ingredient parser with robust dietary misparsing protection
+Includes ALL original functionality + bug fixes for the consolidation issue
 """
 
 from typing import List, Optional, Dict, Any
@@ -37,10 +35,76 @@ FRACTION_TO_UNICODE = {v: k for k, v in UNICODE_TO_FRACTION.items()}
 CONFIDENCE_THRESHOLD = 0.6  # Adjustable threshold
 
 
+# Enhanced dietary misparsing protection patterns
+DIETARY_MISPARSE_PATTERNS = [
+    # Eggplant vs Eggs (the main issue)
+    {
+        'original_contains': ['eggplant'],
+        'parsed_matches': ['eggs', 'egg'],
+        'reason': 'eggplant incorrectly parsed as eggs (vegan vs non-vegan)',
+        'severity': 'critical'  # Critical because it affects vegan classification
+    },
+    
+    # Plant-based milks vs dairy milk
+    {
+        'original_contains': ['coconut milk', 'almond milk', 'oat milk', 'soy milk', 'rice milk', 'cashew milk'],
+        'parsed_matches': ['milk'],
+        'reason': 'plant-based milk incorrectly parsed as dairy milk (vegan vs non-vegan)',
+        'severity': 'critical'
+    },
+    
+    # Plant-based butters vs dairy butter  
+    {
+        'original_contains': ['almond butter', 'peanut butter', 'cashew butter', 'sunflower butter'],
+        'parsed_matches': ['butter'],
+        'reason': 'nut/seed butter incorrectly parsed as dairy butter (vegan vs non-vegan)',
+        'severity': 'critical'
+    },
+    
+    # Vegan cheese vs dairy cheese
+    {
+        'original_contains': ['vegan cheese', 'cashew cheese', 'nutritional yeast'],
+        'parsed_matches': ['cheese'],
+        'reason': 'vegan cheese incorrectly parsed as dairy cheese (vegan vs non-vegan)',
+        'severity': 'critical'
+    },
+    
+    # Plant-based cream vs dairy cream
+    {
+        'original_contains': ['coconut cream', 'cashew cream'],
+        'parsed_matches': ['cream'],
+        'reason': 'plant-based cream incorrectly parsed as dairy cream (vegan vs non-vegan)',
+        'severity': 'critical'
+    },
+    
+    # Egg replacers vs eggs
+    {
+        'original_contains': ['egg replacer', 'flax egg', 'chia egg'],
+        'parsed_matches': ['eggs', 'egg'],
+        'reason': 'egg substitute incorrectly parsed as eggs (vegan vs non-vegan)',
+        'severity': 'critical'
+    },
+    
+    # Additional common misparses that could affect classification
+    {
+        'original_contains': ['vanilla extract'],
+        'parsed_matches': ['vanilla'],
+        'reason': 'vanilla extract parsed as just vanilla (loses specificity)',
+        'severity': 'medium'
+    },
+    
+    # Sea vegetables vs meat (seaweed, etc.)
+    {
+        'original_contains': ['seaweed', 'kelp', 'nori'],
+        'parsed_matches': ['meat', 'beef', 'pork', 'chicken'],
+        'reason': 'sea vegetable incorrectly parsed as meat (vegan vs non-vegan)',
+        'severity': 'critical'
+    }
+]
+
+
 def normalize_fractions_for_parsing(text: str) -> str:
-    """
-    Convert unicode fractions to text fractions for ML parsing
-    """
+    """Convert unicode fractions to text fractions for ML parsing"""
     for unicode_frac, text_frac in UNICODE_TO_FRACTION.items():
         text = text.replace(unicode_frac, text_frac)
     
@@ -51,10 +115,7 @@ def normalize_fractions_for_parsing(text: str) -> str:
 
 
 def convert_to_unicode_fraction(fraction_str: str) -> str:
-    """
-    Convert text fractions to unicode and improper fractions to mixed numbers
-    Examples: "7/2" → "3 ½", "5/4" → "1 ¼", "1/2" → "½"
-    """
+    """Convert text fractions to unicode and improper fractions to mixed numbers"""
     if not fraction_str:
         return fraction_str
     
@@ -72,14 +133,11 @@ def convert_to_unicode_fraction(fraction_str: str) -> str:
             remainder = frac.numerator % frac.denominator
             
             if remainder == 0:
-                # It's a whole number
                 return str(whole_part)
             else:
                 # Mixed number: whole + fraction
                 fractional_part = Fraction(remainder, frac.denominator)
                 fractional_str = str(fractional_part)
-                
-                # Try to convert fractional part to unicode
                 unicode_frac = FRACTION_TO_UNICODE.get(fractional_str, fractional_str)
                 return f"{whole_part} {unicode_frac}"
         else:
@@ -91,7 +149,35 @@ def convert_to_unicode_fraction(fraction_str: str) -> str:
         return fraction_str
 
 
-# Minimal consolidation rules for raw ingredients only
+def check_dietary_misparse(original_text: str, parsed_name: str) -> tuple[bool, str]:
+    """
+    Enhanced dietary misparsing detection using pattern matching
+    Returns (should_fallback, reason)
+    """
+    original_lower = original_text.lower().strip()
+    parsed_lower = parsed_name.lower().strip()
+    
+    print(f"🔍 PROTECTION CHECK: '{original_text}' -> '{parsed_name}'")
+    
+    for pattern in DIETARY_MISPARSE_PATTERNS:
+        # Check if original text contains any of the trigger phrases
+        original_match = any(phrase in original_lower for phrase in pattern['original_contains'])
+        
+        # Check if parsed name matches any of the problematic results
+        parsed_match = any(parsed_lower == target or parsed_lower.endswith(target) 
+                          for target in pattern['parsed_matches'])
+        
+        if original_match and parsed_match:
+            print(f"🚨 DIETARY MISPARSE DETECTED: {pattern['reason']}")
+            print(f"   Original contains: {[phrase for phrase in pattern['original_contains'] if phrase in original_lower]}")
+            print(f"   Parsed as: '{parsed_name}' (matches: {[target for target in pattern['parsed_matches'] if parsed_lower == target or parsed_lower.endswith(target)]})")
+            return True, pattern['reason']
+    
+    print(f"✅ No dietary misparsing detected")
+    return False, ""
+
+
+# FIXED: Better consolidation rules with exact word matching to prevent "eggplant" -> "eggs"
 RAW_INGREDIENT_CONSOLIDATION = {
     "eggs": ["egg", "eggs", "whole egg", "whole eggs", "large egg", "large eggs"],
     "butter": ["butter", "unsalted butter", "salted butter"],
@@ -107,35 +193,42 @@ IGNORED_INGREDIENTS = ["water"]
 
 def normalize_raw_ingredient(ingredient_name: str) -> Optional[str]:
     """
-    Lightly normalize raw ingredient names for consolidation
+    FIXED: Lightly normalize raw ingredient names for consolidation using EXACT WORD MATCHING
+    This prevents "eggplant" from being consolidated to "eggs"
     """
     name = ingredient_name.lower().strip()
     
     # Remove asterisks (footnote markers)
     name = re.sub(r'\*+', '', name).strip()
     
+    print(f"🔧 NORMALIZING: '{ingredient_name}' -> '{name}'")
+    
     # Filter out water
     if any(ignored in name for ignored in IGNORED_INGREDIENTS):
+        print(f"   🚫 Filtered out (ignored ingredient)")
         return None
     
-    # Check consolidation rules
+    # FIXED: Check consolidation rules using EXACT MATCHING to prevent "eggplant" -> "eggs"
     for consolidated_name, variations in RAW_INGREDIENT_CONSOLIDATION.items():
-        if any(variation.lower() in name for variation in variations):
+        # Use exact match instead of substring match
+        if name in [var.lower() for var in variations]:
+            print(f"   🔄 Consolidated '{name}' -> '{consolidated_name}'")
             return consolidated_name
     
+    # No consolidation rule matched, return as-is
+    print(f"   ✅ No consolidation needed, keeping '{name}'")
     return name
 
-def should_use_fallback(parsed_name: str, original_text: str, confidence: float) -> bool:
-    """Simple confidence check"""
-    return confidence < CONFIDENCE_THRESHOLD
 
 def parse_ingredient_structured(ingredient_text: str, confidence_threshold: float = CONFIDENCE_THRESHOLD) -> Optional[StructuredIngredient]:
     """
     Parse a single ingredient into structured components using ingredient-parser-nlp
-    Enhanced with explicit dietary misparsing protection
+    Enhanced with comprehensive dietary misparsing protection
     """
     if not ingredient_text or not ingredient_text.strip():
         return None
+    
+    print(f"\n🔧 PARSING: '{ingredient_text}'")
     
     # Normalize fractions for ML parsing
     normalized_text = normalize_fractions_for_parsing(ingredient_text)
@@ -168,77 +261,49 @@ def parse_ingredient_structured(ingredient_text: str, confidence_threshold: floa
                 ingredient_name = str(parsed.name)
         
         if not ingredient_name:
-            return None
+            print("❌ No ingredient name extracted, using fallback")
+            return StructuredIngredient(
+                raw_ingredient=ingredient_text.strip(),
+                quantity=None,
+                unit=None,
+                descriptors=[],
+                original_text=ingredient_text,
+                confidence=0.0,
+                used_fallback=True
+            )
         
-        # EXPLICIT DIETARY MISPARSING PROTECTION
-        ingredient_text_lower = ingredient_text.lower()
-        ingredient_name_lower = ingredient_name.lower()
+        print(f"   NLP extracted: '{ingredient_name}' (confidence: {name_confidence:.6f})")
         
-        # Force fallback for obvious dietary misparses that could affect vegan classification
-        force_fallback = False
-        fallback_reason = ""
-        
-        if "eggplant" in ingredient_text_lower and ingredient_name_lower in ["eggs", "egg"]:
-            force_fallback = True
-            fallback_reason = "eggplant incorrectly parsed as eggs (vegan vs non-vegan)"
-        elif "coconut milk" in ingredient_text_lower and ingredient_name_lower == "milk":
-            force_fallback = True
-            fallback_reason = "coconut milk incorrectly parsed as regular milk (vegan vs non-vegan)"
-        elif "almond milk" in ingredient_text_lower and ingredient_name_lower == "milk":
-            force_fallback = True
-            fallback_reason = "almond milk incorrectly parsed as regular milk (vegan vs non-vegan)"
-        elif "soy milk" in ingredient_text_lower and ingredient_name_lower == "milk":
-            force_fallback = True
-            fallback_reason = "soy milk incorrectly parsed as regular milk (vegan vs non-vegan)"
-        elif "oat milk" in ingredient_text_lower and ingredient_name_lower == "milk":
-            force_fallback = True
-            fallback_reason = "oat milk incorrectly parsed as regular milk (vegan vs non-vegan)"
-        elif "almond butter" in ingredient_text_lower and ingredient_name_lower == "butter":
-            force_fallback = True
-            fallback_reason = "almond butter incorrectly parsed as regular butter (vegan vs non-vegan)"
-        elif "peanut butter" in ingredient_text_lower and ingredient_name_lower == "butter":
-            force_fallback = True
-            fallback_reason = "peanut butter incorrectly parsed as regular butter (vegan vs non-vegan)"
-        elif "cashew butter" in ingredient_text_lower and ingredient_name_lower == "butter":
-            force_fallback = True
-            fallback_reason = "cashew butter incorrectly parsed as regular butter (vegan vs non-vegan)"
-        elif "vegan cheese" in ingredient_text_lower and ingredient_name_lower == "cheese":
-            force_fallback = True
-            fallback_reason = "vegan cheese incorrectly parsed as regular cheese (vegan vs non-vegan)"
+        # CRITICAL: Check for dietary misparsing BEFORE any normalization
+        force_fallback, fallback_reason = check_dietary_misparse(ingredient_text, ingredient_name)
         
         # Check confidence threshold fallback
         confidence_fallback = name_confidence < confidence_threshold
         
         # Use fallback if forced or low confidence
-        used_fallback = False
         if force_fallback or confidence_fallback:
             if force_fallback:
-                print(f"🔧 DIETARY PROTECTION: Using fallback for '{ingredient_text}' - {fallback_reason}")
+                print(f"🛡️ DIETARY PROTECTION ACTIVATED: {fallback_reason}")
             elif confidence_fallback:
-                print(f"🔄 Low confidence ({name_confidence:.3f}) for '{ingredient_text}', using fallback")
+                print(f"🔄 Low confidence ({name_confidence:.3f}), using fallback")
             
             # Use original text as-is to preserve dietary accuracy
             raw_ingredient = ingredient_text.strip()
-            used_fallback = True
-            
-            # Clear quantity/unit since we're not trusting the parsing
-            quantity = None
-            unit = None
-            descriptors = []
             
             return StructuredIngredient(
                 raw_ingredient=raw_ingredient,
-                quantity=quantity,
+                quantity=quantity,  # Keep parsed quantity/unit if available
                 unit=unit,
-                descriptors=descriptors,
+                descriptors=[],
                 original_text=ingredient_text,
                 confidence=name_confidence,
-                used_fallback=used_fallback
+                used_fallback=True
             )
         
-        # Use parsed result (normal case - parsing looks good)
+        # Normal case - parsing looks good, proceed with normalization
         raw_ingredient = normalize_raw_ingredient(ingredient_name)
         if not raw_ingredient:
+            print(f"🚫 Ingredient filtered out: '{ingredient_name}'")
             return None  # Filtered out (like water)
         
         # Extract and clean descriptors
@@ -261,23 +326,30 @@ def parse_ingredient_structured(ingredient_text: str, confidence_threshold: floa
         
         return StructuredIngredient(
             raw_ingredient=raw_ingredient,
-            quantity=quantity,  # Now in unicode format: "½" not "1/2"
+            quantity=quantity,
             unit=unit,
             descriptors=descriptors,
             original_text=ingredient_text,
             confidence=name_confidence,
-            used_fallback=used_fallback
+            used_fallback=False
         )
         
     except Exception as e:
-        print(f"Failed to parse ingredient '{ingredient_text}': {e}")
-        return None
+        print(f"❌ Parsing error for '{ingredient_text}': {e}")
+        # Return fallback result for any parsing errors
+        return StructuredIngredient(
+            raw_ingredient=ingredient_text.strip(),
+            quantity=None,
+            unit=None,
+            descriptors=[],
+            original_text=ingredient_text,
+            confidence=0.0,
+            used_fallback=True
+        )
 
 
 def combine_quantities(qty1: Optional[str], qty2: Optional[str]) -> Optional[str]:
-    """
-    Combine two quantity strings, handling fractions and decimals
-    """
+    """Combine two quantity strings, handling fractions and decimals"""
     if not qty1 and not qty2:
         return None
     if not qty1:
@@ -287,7 +359,6 @@ def combine_quantities(qty1: Optional[str], qty2: Optional[str]) -> Optional[str
     
     try:
         # Parse both quantities as fractions to handle unicode fractions
-        # First normalize any unicode fractions
         qty1_normalized = normalize_fractions_for_parsing(qty1)
         qty2_normalized = normalize_fractions_for_parsing(qty2)
         
@@ -308,9 +379,7 @@ def combine_quantities(qty1: Optional[str], qty2: Optional[str]) -> Optional[str
 
 
 def can_combine_ingredients(ing1: StructuredIngredient, ing2: StructuredIngredient) -> bool:
-    """
-    Check if two ingredients can be safely combined (same unit or both unitless)
-    """
+    """Check if two ingredients can be safely combined (same unit or both unitless)"""
     # Must be same raw ingredient
     if ing1.raw_ingredient != ing2.raw_ingredient:
         return False
@@ -326,40 +395,8 @@ def can_combine_ingredients(ing1: StructuredIngredient, ing2: StructuredIngredie
     return False
 
 
-def parse_ingredients_list(ingredients: List[str], confidence_threshold: float = CONFIDENCE_THRESHOLD) -> List[StructuredIngredient]:
-    """
-    Parse a list of ingredient strings into structured format with quantity consolidation
-    """
-    structured_ingredients = []
-    ingredient_map = {}  # raw_ingredient -> list of StructuredIngredient
-    
-    # First pass: parse all ingredients
-    for ingredient_text in ingredients:
-        structured = parse_ingredient_structured(ingredient_text, confidence_threshold)
-        
-        if structured:
-            raw_name = structured.raw_ingredient
-            if raw_name not in ingredient_map:
-                ingredient_map[raw_name] = []
-            ingredient_map[raw_name].append(structured)
-    
-    # Second pass: consolidate ingredients with same name
-    for raw_name, ingredient_list in ingredient_map.items():
-        if len(ingredient_list) == 1:
-            # Single occurrence, just add it
-            structured_ingredients.append(ingredient_list[0])
-        else:
-            # Multiple occurrences, try to consolidate
-            consolidated = consolidate_ingredient_group(ingredient_list)
-            structured_ingredients.extend(consolidated)
-    
-    return structured_ingredients
-
-
 def consolidate_ingredient_group(ingredient_list: List[StructuredIngredient]) -> List[StructuredIngredient]:
-    """
-    Consolidate a group of ingredients with the same raw name
-    """
+    """Consolidate a group of ingredients with the same raw name"""
     if len(ingredient_list) <= 1:
         return ingredient_list
     
@@ -408,18 +445,51 @@ def consolidate_ingredient_group(ingredient_list: List[StructuredIngredient]) ->
     return consolidated
 
 
+def parse_ingredients_list(ingredients: List[str], confidence_threshold: float = CONFIDENCE_THRESHOLD) -> List[StructuredIngredient]:
+    """Parse a list of ingredient strings into structured format with quantity consolidation"""
+    structured_ingredients = []
+    ingredient_map = {}  # raw_ingredient -> list of StructuredIngredient
+    
+    print(f"\n📝 PARSING {len(ingredients)} INGREDIENTS:")
+    print("=" * 60)
+    
+    # First pass: parse all ingredients
+    for i, ingredient_text in enumerate(ingredients, 1):
+        print(f"\n[{i}/{len(ingredients)}]")
+        structured = parse_ingredient_structured(ingredient_text, confidence_threshold)
+        
+        if structured:
+            raw_name = structured.raw_ingredient
+            if raw_name not in ingredient_map:
+                ingredient_map[raw_name] = []
+            ingredient_map[raw_name].append(structured)
+    
+    print(f"\n🔄 CONSOLIDATING {len(ingredient_map)} UNIQUE INGREDIENTS:")
+    print("-" * 40)
+    
+    # Second pass: consolidate ingredients with same name
+    for raw_name, ingredient_list in ingredient_map.items():
+        if len(ingredient_list) == 1:
+            # Single occurrence, just add it
+            structured_ingredients.append(ingredient_list[0])
+            print(f"✅ {raw_name}: single occurrence")
+        else:
+            # Multiple occurrences, try to consolidate
+            print(f"🔄 {raw_name}: {len(ingredient_list)} occurrences, consolidating...")
+            consolidated = consolidate_ingredient_group(ingredient_list)
+            structured_ingredients.extend(consolidated)
+    
+    print(f"\n✅ FINAL RESULT: {len(structured_ingredients)} ingredients")
+    return structured_ingredients
+
+
 def get_raw_ingredients_for_search(structured_ingredients: List[StructuredIngredient]) -> List[str]:
-    """
-    Extract just the raw ingredient names for recipe search/filtering
-    """
+    """Extract just the raw ingredient names for recipe search/filtering"""
     return [ing.raw_ingredient for ing in structured_ingredients]
 
 
 def get_shopping_list_items(structured_ingredients: List[StructuredIngredient]) -> List[Dict[str, Any]]:
-    """
-    Format ingredients for shopping list with quantities (using unicode fractions)
-    Returns consolidated quantities when ingredients were combined
-    """
+    """Format ingredients for shopping list with quantities (using unicode fractions)"""
     shopping_items = []
     
     for ing in structured_ingredients:
@@ -427,15 +497,15 @@ def get_shopping_list_items(structured_ingredients: List[StructuredIngredient]) 
         was_combined = "Combined:" in ing.original_text
         
         item = {
-            "name": ing.raw_ingredient,      # Raw ingredient name
-            "quantity": ing.quantity,        # Unicode: "4" for combined eggs 
+            "name": ing.raw_ingredient,
+            "quantity": ing.quantity,
             "unit": ing.unit,
             "descriptors": ing.descriptors,
             "original": ing.original_text,
             "confidence": ing.confidence,
-            "shopping_display": format_shopping_item(ing),  # "4 eggs"
+            "shopping_display": format_shopping_item(ing),
             "used_fallback": ing.used_fallback,
-            "was_combined": was_combined     # True if quantities were added together
+            "was_combined": was_combined
         }
         shopping_items.append(item)
     
@@ -443,12 +513,10 @@ def get_shopping_list_items(structured_ingredients: List[StructuredIngredient]) 
 
 
 def format_shopping_item(ing: StructuredIngredient) -> str:
-    """
-    Format an ingredient for display on shopping list (with unicode fractions)
-    """
+    """Format an ingredient for display on shopping list (with unicode fractions)"""
     if ing.used_fallback:
         # For fallback ingredients, use the raw ingredient which preserves original meaning
-        return ing.raw_ingredient  # This will be "hummus or goat cheese"
+        return ing.raw_ingredient
     
     parts = []
     
@@ -465,30 +533,30 @@ def format_shopping_item(ing: StructuredIngredient) -> str:
 
 # Example usage and testing
 if __name__ == "__main__":
-    # Test the eggplant vs eggs parsing issue
-    print("🧪 Testing enhanced ingredient validation:")
-    print(f"Confidence threshold: {CONFIDENCE_THRESHOLD}")
+    # Test the enhanced protection system
+    print("🧪 Testing COMPLETE Enhanced Dietary Protection:")
     print("=" * 60)
     
     test_ingredients = [
-        "2 medium eggplant",  # Should NOT parse as "eggs"
-        "3 large eggs",       # Should parse as "eggs"
-        "1 cup coconut milk", # Should NOT parse as just "milk"
-        "1 cup whole milk",   # Should parse as "milk"
-        "2 tbsp almond butter", # Should NOT parse as just "butter"
-        "2 tbsp butter",      # Should parse as "butter"
+        "2 medium eggplant",  # Should NOT be consolidated to eggs anymore!
+        "3 large eggs",       # Should be consolidated to eggs (correct)
+        "1 cup coconut milk", # Should trigger protection
+        "1 cup whole milk",   # Should parse normally
+        "2 tbsp almond butter", # Should trigger protection
+        "2 tbsp butter",      # Should parse normally
+        "1 cup flour",        # Test normal ingredient
+        "2 cups flour",       # Test consolidation
     ]
     
-    for ingredient in test_ingredients:
-        result = parse_ingredient_structured(ingredient)
-        if result:
-            print(f"Original: {ingredient}")
-            print(f"  Parsed name: {result.raw_ingredient}")
-            print(f"  Confidence: {result.confidence:.3f}")
-            print(f"  Used fallback: {result.used_fallback}")
-            print(f"  Shopping display: {format_shopping_item(result)}")
-            if result.used_fallback:
-                print(f"  ✅ Used fallback due to validation failure")
-            else:
-                print(f"  ✅ Parsing validated successfully")
-            print("-" * 40)
+    structured = parse_ingredients_list(test_ingredients)
+    
+    print(f"\n📊 SUMMARY:")
+    print(f"   Input ingredients: {len(test_ingredients)}")
+    print(f"   Parsed ingredients: {len(structured)}")
+    print(f"   Used fallback: {sum(1 for ing in structured if ing.used_fallback)}")
+    
+    print(f"\n🛒 SHOPPING LIST:")
+    for item in get_shopping_list_items(structured):
+        fallback_indicator = " [FALLBACK]" if item["used_fallback"] else ""
+        combined_indicator = " [COMBINED]" if item["was_combined"] else ""
+        print(f"   • {item['shopping_display']}{fallback_indicator}{combined_indicator}")
