@@ -1,4 +1,4 @@
-# backend/app/models.py (Corrected version with raw_ingredients field)
+# backend/app/models.py (Enhanced version with adaptability tags)
 from pydantic import BaseModel, HttpUrl, Field
 from typing import Optional, List
 from datetime import datetime
@@ -6,6 +6,17 @@ from datetime import datetime
 class RecipeURL(BaseModel):
     """Request model for recipe URL parsing"""
     url: HttpUrl = Field(..., description="The recipe URL to parse")
+
+class RecipeAdaptability(BaseModel):
+    """AI-generated recipe adaptability suggestions"""
+    easily_veganizable: bool = Field(default=False, description="Can be easily made vegan")
+    vegan_adaptations: Optional[str] = Field(None, description="How to make this recipe vegan")
+    
+    easily_vegetarianizable: bool = Field(default=False, description="Can be easily made vegetarian") 
+    vegetarian_adaptations: Optional[str] = Field(None, description="How to make this recipe vegetarian")
+    
+    easily_healthified: bool = Field(default=False, description="Can be easily made healthier")
+    healthy_adaptations: Optional[str] = Field(None, description="How to make this recipe healthier")
 
 class RecipeCategorization(BaseModel):
     """AI-generated recipe categorization data"""
@@ -17,9 +28,12 @@ class RecipeCategorization(BaseModel):
     confidence_notes: Optional[str] = Field(None, description="AI confidence and reasoning notes")
     ai_model: Optional[str] = Field(None, description="AI model used for categorization")
     categorized_at: Optional[datetime] = Field(None, description="When categorization was performed")
+    
+    # NEW: Recipe adaptability suggestions
+    adaptability: RecipeAdaptability = Field(default_factory=RecipeAdaptability, description="Recipe adaptation suggestions")
 
 class Recipe(BaseModel):
-    """Recipe data model with AI categorization (now default)"""
+    """Recipe data model with AI categorization and adaptability (now default)"""
     # Basic recipe data
     title: str
     description: Optional[str] = None
@@ -48,6 +62,16 @@ class Recipe(BaseModel):
     season: List[str] = Field(default_factory=list, description="AI-identified seasonal associations")
     ai_confidence_notes: Optional[str] = Field(None, description="AI reasoning for categorization")
     
+    # NEW: Recipe adaptability fields
+    easily_veganizable: bool = Field(default=False, description="Recipe can be easily made vegan")
+    vegan_adaptations: Optional[str] = Field(None, description="Instructions for making this recipe vegan")
+    
+    easily_vegetarianizable: bool = Field(default=False, description="Recipe can be easily made vegetarian")
+    vegetarian_adaptations: Optional[str] = Field(None, description="Instructions for making this recipe vegetarian")
+    
+    easily_healthified: bool = Field(default=False, description="Recipe can be easily made healthier")
+    healthy_adaptations: Optional[str] = Field(None, description="Instructions for making this recipe healthier")
+    
     # Metadata
     ai_enhanced: bool = Field(default=False, description="Whether recipe has been AI-categorized")
     ai_model_used: Optional[str] = Field(None, description="AI model used for enhancement")
@@ -64,6 +88,11 @@ class RecipeSearchFilters(BaseModel):
     meal_type: List[str] = Field(default_factory=list, description="Filter by meal type")
     season: List[str] = Field(default_factory=list, description="Filter by season")
     
+    # NEW: Adaptability filters
+    show_veganizable: Optional[bool] = Field(None, description="Show recipes that can be made vegan")
+    show_vegetarianizable: Optional[bool] = Field(None, description="Show recipes that can be made vegetarian")
+    show_healthifiable: Optional[bool] = Field(None, description="Show recipes that can be made healthier")
+    
     # Traditional filters
     max_prep_time: Optional[int] = Field(None, description="Maximum prep time in minutes")
     max_cook_time: Optional[int] = Field(None, description="Maximum cook time in minutes")
@@ -74,7 +103,7 @@ class RecipeSearchFilters(BaseModel):
     offset: int = Field(default=0, ge=0, description="Number of results to skip")
 
 class RecipeStats(BaseModel):
-    """Statistics about recipe categorization"""
+    """Statistics about recipe categorization and adaptability"""
     total_recipes: int
     ai_enhanced_count: int
     ai_enhancement_percentage: float
@@ -82,6 +111,13 @@ class RecipeStats(BaseModel):
     top_cuisines: List[dict]
     top_dish_types: List[dict]
     seasonal_distribution: dict  # {"spring": 45, "summer": 67, ...}
+    
+    # NEW: Adaptability statistics
+    veganizable_count: int = Field(default=0, description="Count of easily veganizable recipes")
+    vegetarianizable_count: int = Field(default=0, description="Count of easily vegetarianizable recipes") 
+    healthifiable_count: int = Field(default=0, description="Count of easily healthifiable recipes")
+    
+    adaptability_percentages: dict = Field(default_factory=dict, description="Percentages for each adaptability type")
 
 class BatchCategorizationRequest(BaseModel):
     """Request model for batch categorizing existing recipes"""
@@ -115,4 +151,5 @@ class HealthResponse(BaseModel):
     ai_available: bool
     ai_model: Optional[str] = None
     ai_categorization_enabled: bool = Field(default=True, description="AI categorization is now standard")
+    ai_adaptability_enabled: bool = Field(default=True, description="AI adaptability suggestions enabled")
     timestamp: Optional[str] = None

@@ -1,4 +1,4 @@
-# backend/app/routes/recipes.py (Safe version with fallback)
+# backend/app/routes/recipes.py (Compatible with current categorizer)
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
 from typing import List, Optional
 from app.models import (
@@ -8,7 +8,7 @@ from app.models import (
 )
 from app.services.recipe_service import RecipeService
 
-# Create router first (this is what was missing!)
+# Create router first
 router = APIRouter()
 
 # Try to import AI services, but fall back gracefully if they fail
@@ -77,7 +77,7 @@ async def categorize_existing_recipe(recipe: Recipe):
         if not categorization:
             raise HTTPException(status_code=500, detail="AI categorization failed")
         
-        # Create enhanced recipe with AI categorization
+        # Create enhanced recipe with AI categorization (NO adaptability fields)
         enhanced_recipe = Recipe(
             title=recipe.title,
             description=recipe.description,
@@ -93,10 +93,10 @@ async def categorize_existing_recipe(recipe: Recipe):
             keywords=recipe.keywords,
             found_structured_data=recipe.found_structured_data,
             used_ai=True,
-            raw_ingredients=getattr(recipe, 'raw_ingredients', []),  # Handle missing field gracefully
-            raw_ingredients_detailed=getattr(recipe, 'raw_ingredients_detailed', []),  # Handle missing field gracefully
+            raw_ingredients=getattr(recipe, 'raw_ingredients', []),
+            raw_ingredients_detailed=getattr(recipe, 'raw_ingredients_detailed', []),
             
-            # Add AI categorization
+            # Add AI categorization (compatible with current categorizer)
             health_tags=categorization.health_tags,
             dish_type=categorization.dish_type,
             cuisine_type=categorization.cuisine_type,
@@ -117,7 +117,7 @@ async def search_recipes(
     # Text search
     q: Optional[str] = Query(None, description="Search query"),
     
-    # AI categorization filters (now standard)
+    # AI categorization filters
     health: Optional[str] = Query(None, description="Health tags (comma-separated)"),
     dish: Optional[str] = Query(None, description="Dish types (comma-separated)"),
     cuisine: Optional[str] = Query(None, description="Cuisine types (comma-separated)"),
@@ -136,21 +136,6 @@ async def search_recipes(
     """
     Advanced recipe search with AI categorization filters
     """
-    # Parse comma-separated filter values
-    filters = RecipeSearchFilters(
-        query=q,
-        health_tags=health.split(",") if health else [],
-        dish_type=dish.split(",") if dish else [],
-        cuisine_type=cuisine.split(",") if cuisine else [],
-        meal_type=meal.split(",") if meal else [],
-        season=season.split(",") if season else [],
-        max_prep_time=max_prep,
-        max_cook_time=max_cook,
-        has_image=has_image,
-        limit=limit,
-        offset=offset
-    )
-    
     # TODO: Implement actual database search
     raise HTTPException(
         status_code=501, 
@@ -163,7 +148,6 @@ async def get_available_categories():
     Get all available categorization options for filtering
     """
     if not AI_AVAILABLE:
-        # Return empty categories if AI not available
         return {
             "health_tags": [],
             "dish_types": [],
@@ -216,7 +200,6 @@ async def get_recipe_stats():
 async def debug_ai_categorization(recipe_url: RecipeURL):
     """
     Debug endpoint to see exactly what the AI is thinking during categorization
-    Useful for identifying why dietary tags might be wrong
     """
     if not AI_AVAILABLE:
         raise HTTPException(
@@ -250,6 +233,119 @@ async def debug_ai_categorization(recipe_url: RecipeURL):
                 "check_for_animal_products": "Look for: meat, dairy, eggs, fish, honey, gelatin in ingredients above"
             }
         }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Debug failed: {str(e)}")
+
+@router.post("/debug-vegan-detection", response_model=dict)
+async def debug_vegan_detection(recipe_url: RecipeURL):
+    """
+    Debug endpoint specifically for testing vegan detection
+    """
+    if not AI_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="AI categorization service not available"
+        )
+    
+    try:
+        from app.services.ai.recipe_categorizer import RecipeCategorizationService
+        from app.services.recipe_service import RecipeService
+        
+        # Parse the recipe first
+        recipe = await RecipeService.parse_recipe_hybrid(str(recipe_url.url))
+        
+        if not recipe or recipe.title == "Unable to parse recipe":
+            raise HTTPException(status_code=400, detail="Could not parse recipe from URL")
+        
+        # Analyze ingredients for vegan content
+        animal_keywords = [
+            'meat', 'chicken', 'beef', 'pork', 'fish', 'salmon', 'tuna', 'turkey',
+            'milk', 'cream', 'butter', 'cheese', 'yogurt', 'dairy',
+            'egg', 'eggs', 'honey', 'gelatin', 'lard', 'bacon'
+        ]
+        
+        plant_keywords = [
+            'chickpea', 'chickpeas', 'lentil', 'lentils', 'bean', 'beans',
+            'tofu', 'tempeh', 'vegetable', 'vegetables', 'fruit', 'fruits',
+            'vegan', 'plant', 'almond', 'oat', 'soy', 'coconut', 'nuts',
+            'seeds', 'grains', 'quinoa', 'rice', 'pasta'
+        ]
+        
+        animal_ingredients = []
+        plant_ingredients = []
+        vegan_indicators = []
+        
+        for ingredient in recipe.ingredients:
+            ingredient_lower = ingredient.lower()
+            
+            if any(keyword in ingredient_lower for keyword in animal_keywords):
+                animal_ingredients.append(ingredient)
+            
+            if any(keyword in ingredient_lower for keyword in plant_keywords):
+                plant_ingredients.append(ingredient)
+                
+            if 'vegan' in ingredient_lower:
+                vegan_indicators.append(ingredient)
+        
+        # Get AI categorization
+        categorization_service = RecipeCategorizationService()
+        categorization = await categorization_service.categorize_recipe(recipe)
+        
+        # Determine expected classification
+        should_be_vegan = len(animal_ingredients) == 0 and (len(plant_ingredients) > 0 or len(vegan_indicators) > 0)
+        actual_is_vegan = categorization and 'vegan' in categorization.health_tags
+        
+        debug_info = {
+            "recipe_title": recipe.title,
+            "total_ingredients": len(recipe.ingredients),
+            "ingredients": recipe.ingredients,
+            
+            "ingredient_analysis": {
+                "animal_ingredients": animal_ingredients,
+                "plant_ingredients": plant_ingredients,
+                "vegan_indicators": vegan_indicators,
+                "animal_count": len(animal_ingredients),
+                "plant_count": len(plant_ingredients),
+                "vegan_indicator_count": len(vegan_indicators)
+            },
+            
+            "classification_analysis": {
+                "should_be_vegan": should_be_vegan,
+                "should_be_vegan_reason": (
+                    "No animal products found and has plant-based ingredients" if should_be_vegan 
+                    else f"Found {len(animal_ingredients)} potential animal products"
+                ),
+                "actual_is_vegan": actual_is_vegan,
+                "classification_correct": should_be_vegan == actual_is_vegan
+            },
+            
+            "ai_categorization": {
+                "health_tags": categorization.health_tags if categorization else [],
+                "dish_type": categorization.dish_type if categorization else [],
+                "cuisine_type": categorization.cuisine_type if categorization else [],
+                "meal_type": categorization.meal_type if categorization else [],
+                "season": categorization.season if categorization else [],
+                "confidence_notes": categorization.confidence_notes if categorization else "",
+                "ai_model": categorization.ai_model if categorization else None
+            },
+            
+            "recommendations": []
+        }
+        
+        # Add recommendations based on analysis
+        if should_be_vegan and not actual_is_vegan:
+            debug_info["recommendations"].append("❌ ISSUE: Recipe should be tagged as vegan but isn't")
+            debug_info["recommendations"].append("🔧 FIX: Check AI prompt for vegan detection rules")
+        
+        if not should_be_vegan and actual_is_vegan:
+            debug_info["recommendations"].append("⚠️ WARNING: Recipe tagged as vegan but contains animal products")
+            debug_info["recommendations"].append(f"🔍 CHECK: Animal ingredients detected: {animal_ingredients}")
+        
+        if should_be_vegan and actual_is_vegan:
+            debug_info["recommendations"].append("✅ CORRECT: Vegan classification is accurate")
+        
+        return debug_info
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Debug failed: {str(e)}")
@@ -295,8 +391,8 @@ async def test_ai_categorization():
             prep_time="10 minutes",
             cook_time="20 minutes",
             servings="4",
-            raw_ingredients=[],  # Initialize the required field
-            raw_ingredients_detailed=[]  # Initialize the required field
+            raw_ingredients=[],
+            raw_ingredients_detailed=[]
         )
         
         # Categorize it

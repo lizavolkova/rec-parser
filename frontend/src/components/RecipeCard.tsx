@@ -33,12 +33,20 @@ interface Recipe {
     ai_confidence_notes?: string;
     ai_enhanced: boolean;
     ai_model_used?: string;
+    
+    // NEW: Adaptability fields
+    easily_veganizable?: boolean;
+    vegan_adaptations?: string;
+    easily_vegetarianizable?: boolean;
+    vegetarian_adaptations?: string;
+    easily_healthified?: boolean;
+    healthy_adaptations?: string;
   }
   
   interface RecipeCardProps {
     recipe: Recipe;
-    onReCategorize?: () => void; // NEW: callback for re-categorization
-    aiLoading?: boolean; // NEW: loading state for AI operations
+    onReCategorize?: () => void;
+    aiLoading?: boolean;
   }
   
   export function RecipeCard({ recipe, onReCategorize, aiLoading = false }: RecipeCardProps) {
@@ -87,7 +95,7 @@ interface Recipe {
       if (!detailed) {
         return <span>{originalIngredient}</span>;
       }
-  
+
       // Create a case-insensitive regex to find the raw ingredient name
       const rawIngredientName = detailed.name;
       const regex = new RegExp(`\\b(${rawIngredientName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})\\b`, 'gi');
@@ -174,6 +182,57 @@ interface Recipe {
       };
       return emojis[meal.toLowerCase()] || '🍽️';
     };
+
+    // NEW: Helper function to check if recipe has any adaptability suggestions
+    const hasAdaptabilityOptions = () => {
+      return recipe.easily_veganizable || recipe.easily_vegetarianizable || recipe.easily_healthified;
+    };
+
+    // NEW: Component for adaptation cards
+    const AdaptationCard = ({ 
+      type, 
+      available, 
+      instructions, 
+      emoji, 
+      title, 
+      description,
+      bgColor,
+      borderColor,
+      textColor 
+    }: {
+      type: string;
+      available?: boolean;
+      instructions?: string;
+      emoji: string;
+      title: string;
+      description: string;
+      bgColor: string;
+      borderColor: string;
+      textColor: string;
+    }) => {
+      if (!available || !instructions) return null;
+
+      return (
+        <div className={`${bgColor} ${borderColor} border-2 rounded-xl p-4 transition-all duration-200 hover:shadow-lg`}>
+          <div className="flex items-start space-x-3">
+            <div className="text-2xl flex-shrink-0">{emoji}</div>
+            <div className="flex-1">
+              <h4 className={`font-bold ${textColor} mb-1 flex items-center`}>
+                {title}
+                <span className="ml-2 px-2 py-1 bg-white/80 rounded-full text-xs font-medium text-gray-700">
+                  Easy to make!
+                </span>
+              </h4>
+              <p className="text-gray-600 text-sm mb-3">{description}</p>
+              <div className="bg-white/60 rounded-lg p-3 border border-white/50">
+                <h5 className="text-sm font-semibold text-gray-700 mb-1">How to adapt:</h5>
+                <p className="text-sm text-gray-800 leading-relaxed">{instructions}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    };
   
     return (
       <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
@@ -191,10 +250,26 @@ interface Recipe {
             />
           ) : null}
           <div className="absolute inset-0 bg-black/20 flex items-end">
-            <div className="p-6 text-white">
-              <div className="flex items-center justify-between mb-2">
-                <h2 className="text-3xl font-bold">{recipe.title}</h2>
-                <div className="flex items-center gap-2">
+            <div className="p-6 text-white w-full">
+              <div className="flex items-end justify-between mb-2">
+                <h2 className="text-3xl font-bold flex-1">{recipe.title}</h2>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* NEW: Adaptability badges on recipe header */}
+                  {recipe.easily_veganizable && (
+                    <div className="bg-green-500/90 backdrop-blur-sm px-3 py-1 rounded-full text-sm font-medium flex items-center">
+                      🌱 Easily Vegan
+                    </div>
+                  )}
+                  {recipe.easily_vegetarianizable && (
+                    <div className="bg-green-400/90 backdrop-blur-sm px-3 py-1 rounded-full text-sm font-medium flex items-center">
+                      🥬 Easily Vegetarian
+                    </div>
+                  )}
+                  {recipe.easily_healthified && (
+                    <div className="bg-emerald-500/90 backdrop-blur-sm px-3 py-1 rounded-full text-sm font-medium flex items-center">
+                      💪 Easily Healthier
+                    </div>
+                  )}
                   {recipe.ai_enhanced && (
                     <div className="bg-gradient-to-r from-purple-500 to-pink-500 px-3 py-1 rounded-full text-sm font-medium flex items-center">
                       🤖 AI Enhanced
@@ -246,8 +321,61 @@ interface Recipe {
               </div>
             )}
           </div>
+
+          {/* NEW: Recipe Adaptability Section */}
+          {hasAdaptabilityOptions() && (
+            <div className="mb-8 bg-gradient-to-r from-green-50 via-emerald-50 to-green-50 rounded-2xl p-6 border border-green-200">
+              <h3 className="text-2xl font-bold text-gray-800 mb-4 flex items-center">
+                ✨ Recipe Adaptations
+                <span className="ml-3 px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm font-medium">
+                  Easy to customize!
+                </span>
+              </h3>
+              <p className="text-gray-600 mb-6">
+                This recipe can be easily adapted to fit different dietary preferences and health goals:
+              </p>
+              
+              <div className="grid gap-4 md:grid-cols-1 lg:grid-cols-2 xl:grid-cols-3">
+                <AdaptationCard
+                  type="vegan"
+                  available={recipe.easily_veganizable}
+                  instructions={recipe.vegan_adaptations}
+                  emoji="🌱"
+                  title="Make it Vegan"
+                  description="Plant-based version of this recipe"
+                  bgColor="bg-green-50"
+                  borderColor="border-green-300"
+                  textColor="text-green-800"
+                />
+                
+                <AdaptationCard
+                  type="vegetarian"
+                  available={recipe.easily_vegetarianizable}
+                  instructions={recipe.vegetarian_adaptations}
+                  emoji="🥬"
+                  title="Make it Vegetarian"
+                  description="Meat-free version of this recipe"
+                  bgColor="bg-lime-50"
+                  borderColor="border-lime-300"
+                  textColor="text-lime-800"
+                />
+                
+                <AdaptationCard
+                  type="healthy"
+                  available={recipe.easily_healthified}
+                  instructions={recipe.healthy_adaptations}
+                  emoji="💪"
+                  title="Make it Healthier"
+                  description="Nutritious version of this recipe"
+                  bgColor="bg-emerald-50"
+                  borderColor="border-emerald-300"
+                  textColor="text-emerald-800"
+                />
+              </div>
+            </div>
+          )}
   
-          {/* NEW: AI Insights Section with Re-categorization Button */}
+          {/* AI Insights Section with Re-categorization Button */}
           {recipe.ai_enhanced && (
             <div className="mb-8 bg-gradient-to-r from-purple-50 to-pink-50 rounded-xl p-6 border border-purple-100">
               <div className="flex items-center justify-between mb-4">
@@ -262,7 +390,7 @@ interface Recipe {
                   </h3>
                 </div>
                 
-                {/* NEW: Refresh AI Tags Button */}
+                {/* Refresh AI Tags Button */}
                 {onReCategorize && (
                   <button
                     onClick={onReCategorize}
@@ -414,7 +542,8 @@ interface Recipe {
                 <div className="text-4xl">🤖</div>
                 <h3 className="text-lg font-semibold text-gray-700">Add AI Recipe Insights</h3>
                 <p className="text-gray-600 text-sm max-w-md">
-                  Get smart categorization including dietary tags, cuisine type, seasonal recommendations, and more.
+                  Get smart categorization including dietary tags, cuisine type, seasonal recommendations, 
+                  and discover easy ways to make this recipe vegan, vegetarian, or healthier!
                 </p>
                 <button
                   onClick={onReCategorize}
@@ -428,7 +557,7 @@ interface Recipe {
                     </>
                   ) : (
                     <>
-                      ✨ Add AI Insights
+                      ✨ Add AI Insights & Adaptations
                     </>
                   )}
                 </button>
@@ -538,6 +667,11 @@ interface Recipe {
                 {recipe.ai_enhanced && (
                   <span className="flex items-center text-purple-600">
                     ✨ AI Enhanced
+                  </span>
+                )}
+                {hasAdaptabilityOptions() && (
+                  <span className="flex items-center text-green-600">
+                    🌱 Adaptable Recipe
                   </span>
                 )}
                 {recipe.raw_ingredients_detailed && (

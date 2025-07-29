@@ -38,13 +38,21 @@ interface Recipe {
   ai_confidence_notes?: string;
   ai_enhanced: boolean;
   ai_model_used?: string;
+  
+  // NEW: Adaptability fields
+  easily_veganizable?: boolean;
+  vegan_adaptations?: string;
+  easily_vegetarianizable?: boolean;
+  vegetarian_adaptations?: string;
+  easily_healthified?: boolean;
+  healthy_adaptations?: string;
 }
 
 export default function Home() {
   const [url, setUrl] = useState('');
   const [recipe, setRecipe] = useState<Recipe | null>(null);
   const [loading, setLoading] = useState(false);
-  const [aiLoading, setAiLoading] = useState(false); // NEW: separate loading state for AI re-categorization
+  const [aiLoading, setAiLoading] = useState(false); // separate loading state for AI re-categorization
   const [error, setError] = useState<string | null>(null);
 
   const parseRecipe = async () => {
@@ -79,7 +87,7 @@ export default function Home() {
     }
   };
 
-  // NEW: Function to re-categorize recipe with AI
+  // Function to re-categorize recipe with AI (now includes adaptability analysis)
   const reCategorizeRecipe = async () => {
     if (!recipe) return;
 
@@ -121,8 +129,12 @@ export default function Home() {
           <h1 className="text-5xl font-bold text-white mb-4">
             🍳 Recipe Parser
           </h1>
-          <p className="text-xl text-white/90">
+          <p className="text-xl text-white/90 mb-2">
             Paste any recipe URL and get clean, structured recipe data
+          </p>
+          {/* NEW: Updated subtitle to mention adaptability features */}
+          <p className="text-sm text-white/80">
+            ✨ Now with AI-powered adaptability suggestions for vegan, vegetarian, and healthier versions!
           </p>
         </div>
 
@@ -149,7 +161,7 @@ export default function Home() {
               disabled={loading || !url.trim()}
               className="w-full bg-gradient-to-r from-blue-500 to-purple-600 text-white text-lg font-semibold py-4 px-6 rounded-xl hover:from-blue-600 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 transform hover:scale-[1.02]"
             >
-              {loading ? 'Parsing Recipe...' : 'Parse Recipe'}
+              {loading ? 'Parsing Recipe...' : 'Parse Recipe & Analyze Adaptability'}
             </button>
           </form>
 
@@ -171,7 +183,26 @@ export default function Home() {
               >
                 Asian Inspirations - Braised Chicken
               </button>
+              {/* NEW: Example that should show good adaptability options */}
+              <button
+                onClick={() => setUrl('https://www.loveandlemons.com/spaghetti-carbonara-recipe/')}
+                className="block text-blue-600 hover:text-blue-800 text-sm underline"
+                disabled={loading}
+              >
+                Love and Lemons - Spaghetti Carbonara (Great for adaptability!)
+              </button>
             </div>
+          </div>
+
+          {/* NEW: Feature highlight */}
+          <div className="mt-4 p-4 bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl border border-green-200">
+            <div className="flex items-center mb-2">
+              <span className="text-green-600 text-lg mr-2">✨</span>
+              <h4 className="font-semibold text-green-800">New: Recipe Adaptability Analysis</h4>
+            </div>
+            <p className="text-sm text-green-700">
+              Our AI will analyze each recipe and suggest easy ways to make it vegan, vegetarian, or healthier with simple ingredient swaps!
+            </p>
           </div>
         </div>
 
