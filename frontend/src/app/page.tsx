@@ -66,7 +66,7 @@ export default function Home() {
     setRecipe(null);
 
     try {
-      const response = await fetch('http://localhost:8000/parse-recipe', {
+      const response = await fetch('http://localhost:4321/parse-recipe', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
