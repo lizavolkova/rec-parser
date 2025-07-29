@@ -31,6 +31,7 @@ interface Recipe {
     meal_type: string[];
     season: string[];
     ai_confidence_notes?: string;
+    ai_confidence_notes_user?: string;
     ai_enhanced: boolean;
     ai_model_used?: string;
     
@@ -510,8 +511,20 @@ interface Recipe {
                   </div>
                 )}
   
-                {/* AI Confidence Notes */}
-                {recipe.ai_confidence_notes && (
+                {/* AI Confidence Notes USER */}
+                {recipe.ai_confidence_notes_user && (
+                  <div className="mt-4 pt-4 border-t border-purple-200">
+                    <h4 className="text-sm font-semibold text-gray-700 mb-2 flex items-center">
+                      💭 AI Analysis Notes
+                    </h4>
+                    <p className="text-sm text-gray-600 italic leading-relaxed">
+                      "{recipe.ai_confidence_notes_user}"
+                    </p>
+                  </div>
+                )}
+
+                {/* AI Confidence Notes DATA */}
+              {recipe.ai_confidence_notes && (
                   <div className="mt-4 pt-4 border-t border-purple-200">
                     <h4 className="text-sm font-semibold text-gray-700 mb-2 flex items-center">
                       💭 AI Analysis Notes
@@ -522,6 +535,9 @@ interface Recipe {
                   </div>
                 )}
               </div>
+
+              
+              
   
               {/* Loading overlay for AI re-categorization */}
               {aiLoading && (

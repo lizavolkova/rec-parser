@@ -26,6 +26,7 @@ class RecipeCategorization(BaseModel):
     meal_type: List[str] = Field(default_factory=list, description="Meal timing (breakfast, lunch, etc.)")
     season: List[str] = Field(default_factory=list, description="Seasonal associations")
     confidence_notes: Optional[str] = Field(None, description="AI confidence and reasoning notes")
+    confidence_notes_user: Optional[str] = Field(None, description="Condensed user-friendly confidence explanation")  # ADD THIS LINE
     ai_model: Optional[str] = Field(None, description="AI model used for categorization")
     categorized_at: Optional[datetime] = Field(None, description="When categorization was performed")
     
@@ -61,6 +62,7 @@ class Recipe(BaseModel):
     meal_type: List[str] = Field(default_factory=list, description="AI-identified meal types")
     season: List[str] = Field(default_factory=list, description="AI-identified seasonal associations")
     ai_confidence_notes: Optional[str] = Field(None, description="AI reasoning for categorization")
+    ai_confidence_notes_user: Optional[str] = Field(None, description="User-friendly AI reasoning summary")
     
     # NEW: Recipe adaptability fields
     easily_veganizable: bool = Field(default=False, description="Recipe can be easily made vegan")

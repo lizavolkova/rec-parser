@@ -1,4 +1,4 @@
-# backend/app/services/ai/recipe_categorizer.py (IMPROVED VERSION)
+# backend/app/services/ai/recipe_categorizer.py (ROBUST VERSION)
 import json
 import traceback
 from typing import Optional, List, Dict, Any
@@ -48,772 +48,648 @@ class RecipeCategorizationService:
             print("❌ AI categorization requested but OpenAI client not available")
             return None
         
-        # Debug: Print available health tags
-        print(f"🔍 DEBUG: Available HEALTH_TAGS: {self.HEALTH_TAGS}")
-        print(f"🔍 DEBUG: 'easily veganizable' in HEALTH_TAGS: {'easily veganizable' in self.HEALTH_TAGS}")
-        
         try:
             print(f"🤖 Starting AI categorization for: {recipe.title}")
             
-            prompt = self._build_categorization_prompt(recipe)
+            # Step 1: Basic categorization
+            basic_prompt = self._build_basic_categorization_prompt(recipe)
+            basic_response = await self._call_openai(basic_prompt, "basic categorization")
             
-            response = openai_client.chat.completions.create(
-                model=settings.AI_MODEL,
-                messages=[
-                    {
-                        "role": "system", 
-                        "content": self._get_system_prompt()
-                    },
-                    {
-                        "role": "user", 
-                        "content": prompt
-                    }
-                ],
-                temperature=settings.AI_TEMPERATURE,  # Use configurable temperature
-                max_tokens=settings.AI_MAX_TOKENS,
-                seed=getattr(settings, 'AI_SEED', 42)  # Use configurable seed for consistency
-            )
+            if not basic_response:
+                print("❌ Basic categorization failed")
+                return None
             
-            ai_response = response.choices[0].message.content.strip()
-            print(f"🤖 AI categorization response: {ai_response[:200]}...")
+            basic_data = self._parse_basic_response(basic_response)
+            if not basic_data:
+                print("❌ Could not parse basic categorization")
+                return None
             
-            return self._parse_categorization_response(ai_response, recipe.title)
+            # Step 2: Adaptability analysis
+            adaptability_prompt = self._build_adaptability_prompt(recipe, basic_data)
+            adaptability_response = await self._call_openai(adaptability_prompt, "adaptability analysis")
+            
+            adaptability_data = {}
+            if adaptability_response:
+                adaptability_data = self._parse_adaptability_response(adaptability_response)
+            
+            # Step 3: Combine results
+            return self._create_categorization(basic_data, adaptability_data, recipe.title, recipe.ingredients)
             
         except Exception as e:
             print(f"🤖 AI categorization failed: {e}")
             print(f"🤖 Traceback: {traceback.format_exc()}")
             return None
     
-    def _get_system_prompt(self) -> str:
-        """System prompt that defines the AI's role and capabilities"""
-        return f"""You are a culinary expert AI that categorizes recipes with high accuracy and CONSISTENCY. 
-
-Your task is to analyze recipes and categorize them into specific categories. You should be comprehensive but accurate - a recipe can have multiple tags in each category when appropriate.
-
-CRITICAL: ONLY analyze what is actually present in the recipe. Do NOT hallucinate or assume ingredients, cooking methods, or characteristics not explicitly mentioned.
-
-CATEGORY GUIDELINES:
-
-HEALTH TAGS - Use systematic analysis for dietary restrictions:
-{', '.join(self.HEALTH_TAGS)}
-
-DIETARY CLASSIFICATION RULES:
-- VEGAN: Contains ZERO animal products (vegetables, fruits, grains, legumes, nuts, seeds, plant oils, soy sauce, vinegar, spices, herbs, agave syrup, chili crisp, tofu, tempeh, etc.)
-- VEGETARIAN: No meat/seafood but may contain dairy/eggs
-- EASILY VEGANIZABLE: Vegetarian recipes with only 1-2 easily replaceable dairy/egg ingredients (like cheese that can be omitted or substituted)
-- PESCATARIAN: Contains fish/seafood but no other meat
-- RED MEAT FREE: No beef, pork, lamb, or other red meat (but may contain poultry/fish)
-- DAIRY FREE: No milk, cheese, butter, cream, yogurt, or other dairy products
-- If ALL ingredients are plant-based, tag as VEGAN (not vegetarian)
-
-CRITICAL: BE EXTREMELY CAREFUL WITH VEGAN VS VEGETARIAN
-- Read the actual ingredients list carefully
-- Do NOT assume ingredients that aren't listed
-- Gochujang, eggplant, scallions, vegetable oil, soy sauce, sesame oil = ALL VEGAN
-- Parmesan cheese, butter, milk, cream, eggs = NOT VEGAN (tag as vegetarian)
-
-EXAMPLES OF PROPER CATEGORIZATION WITH CONFIDENCE NOTES:
-- Farro salad with parmesan cheese → health_tags: ["vegetarian", "easily veganizable", "healthy"] + notes: "Tagged as vegetarian due to parmesan cheese, and easily veganizable since the cheese can be omitted or replaced with nutritional yeast. Healthy due to nutrient-rich farro and fresh vegetables."
-- Gochujang eggplant with scallions → health_tags: ["vegan", "healthy"] + notes: "Completely vegan with all plant-based ingredients (eggplant, gochujang, scallions, oil). Healthy due to vegetables and minimal processing."
-- Pasta with cream sauce → health_tags: ["vegetarian", "healthy"] + notes: "Vegetarian due to cream, but not easily veganizable since cream is central to the dish."
-
-EASILY VEGANIZABLE CRITERIA: Tag as "easily veganizable" if a recipe is vegetarian and contains only 1-2 easily replaceable ingredients like:
-- Cheese (especially parmesan) that can be omitted or replaced with vegan cheese/nutritional yeast
-- Butter that can be replaced with oil or vegan butter
-- Small amounts of dairy that don't define the dish
-- NOT easily veganizable: eggs in baking, cream-based sauces, dishes where dairy is central
-
-RED MEAT INCLUDES: beef, pork, lamb, mutton, venison, bison, goat
-POULTRY INCLUDES: chicken, turkey, duck, etc. (NOT red meat)
-
-HEALTHY TAG CRITERIA - Tag as "healthy" if the dish has:
-- Lots of vegetables or fruits as main components
-- Lean proteins (fish, chicken, tofu, beans)
-- Whole grains or minimal processing
-- Limited fried foods or heavy cream sauces
-- Balanced nutritional profile
-
-IMPROVED HEALTHY DETECTION - Also tag as "healthy" if the dish meets ANY of these criteria:
-1. VEGETABLE-FORWARD: Contains vegetables as a main component (not just garnish)
-   - Examples: tofu with broccoli, veggie stir-fry, salads, vegetable soups
-2. LEAN PROTEIN FOCUS: Features lean proteins like:
-   - Fish, shellfish, chicken breast, turkey
-   - Tofu, tempeh, beans, lentils, chickpeas
-   - Eggs (in moderation)
-3. WHOLE FOOD INGREDIENTS: Minimal processed foods, lots of:
-   - Fresh vegetables, fruits, herbs, spices
-   - Whole grains (brown rice, quinoa, oats)
-   - Nuts, seeds (in reasonable amounts)
-4. BALANCED NUTRITION: Good balance of protein, vegetables, healthy fats
-5. COOKING METHODS: Steamed, grilled, baked, sautéed, roasted (not deep-fried)
-
-HEALTHY EXAMPLES THAT SHOULD GET THE TAG:
-- "Lemon miso tofu with broccoli" → HEALTHY (tofu = lean protein, broccoli = vegetable)
-- "Grilled chicken with roasted vegetables" → HEALTHY (lean protein + vegetables)
-- "Quinoa Buddha bowl with chickpeas" → HEALTHY (whole grains + legumes + vegetables)
-- "Salmon with asparagus" → HEALTHY (lean protein + vegetables)
-- "Vegetable stir-fry with tofu" → HEALTHY (vegetables + lean protein)
-- "Bean and vegetable soup" → HEALTHY (legumes + vegetables)
-
-BE GENEROUS with the healthy tag - if a dish has good nutritional value, tag it as healthy!
-
-DISH TYPES - What type of dish this is (can be multiple):
-{', '.join(self.DISH_TYPES)}
-
-COOKING METHOD DETECTION:
-- If recipe mentions grilling, BBQ, or grill pan → include "grilling"
-- If served as small portions or before main course → include "starter or appetizer"
-- Look for cooking methods in instructions and title
-
-CUISINE TYPES - The cultural/regional cooking style:
-{', '.join(self.CUISINE_TYPES)}
-
-CUISINE TAGGING RULES:
-- Tag BOTH specific AND broader categories when applicable, but be culturally accurate
-- Chinese/Korean/Thai/Vietnamese/Japanese → ALSO tag as "asian"
-- Indian/Middle Eastern → Do NOT tag as "asian" (distinct flavor profiles)
-- Italian/French/Spanish/Greek → Can tag as "mediterranean" if appropriate
-- Examples: "chinese, asian" or "thai, asian" but just "indian" (not "indian, asian")
-
-MEAL TYPES - When this would typically be eaten (can be multiple):
-{', '.join(self.MEAL_TYPES)}
-
-MEAL TYPE FLEXIBILITY:
-- Many dishes work for multiple meals (lunch AND dinner)
-- Consider portion size and ingredients
-- Don't be overly restrictive - if it could reasonably be eaten at different times, include multiple tags
-
-SEASONS - When ingredients are typically in season or dish is commonly eaten:
-{', '.join(self.SEASONS)}
-
-SEASONAL ASSIGNMENT RULES:
-- Consider the main ingredients and dish characteristics
-- Cold salads with summer vegetables (cucumber, tomato) = summer primarily
-- Warm soups and stews can be autumn AND winter (not just one)
-- Light, refreshing dishes = summer
-- Hearty, warming dishes = autumn and/or winter
-- Fresh spring vegetables = spring
-- Many dishes work across multiple seasons - don't be overly restrictive
-
-SEASONAL EXAMPLES:
-- Cucumber salad = summer
-- Roasted garlic soup = autumn, winter (both)
-- Pumpkin soup = autumn
-- Asparagus dishes = spring
-- Grilled dishes = summer (but can span multiple if hearty)
-
-IMPORTANT RULES:
-1. Only use tags from the provided lists
-2. Be generous with applicable tags when appropriate - better to include relevant tags than miss them
-3. For health tags, systematically check all ingredients and cooking methods
-4. BE ESPECIALLY GENEROUS with the "healthy" tag - if it has vegetables + lean protein OR is vegetable-forward, tag it as healthy
-5. For seasons and meal types, don't be overly restrictive - many dishes work across categories
-6. Always include broader cuisine categories (asian, mediterranean) alongside specific ones
-7. Detect cooking methods from instructions and titles
-8. Only reference ingredients and cooking methods that are ACTUALLY in the recipe
-9. Always return valid JSON in the exact format requested
-10. BE CONSISTENT - same recipe should always get same categorization
-11. If all ingredients are plant-based, tag as VEGAN (not vegetarian)
-12. Remember: lamb, beef, pork = red meat; chicken, turkey = poultry (not red meat)
-13. MOST IMPORTANTLY: Don't be stingy with the "healthy" tag - if it's nutritious, tag it!"""
-
-    def _build_categorization_prompt(self, recipe: Recipe) -> str:
-        """Build the user prompt with recipe data"""
+    async def _call_openai(self, prompt: str, operation: str) -> Optional[str]:
+        """Make OpenAI API call with error handling"""
+        try:
+            response = openai_client.chat.completions.create(
+                model=settings.AI_MODEL,
+                messages=[
+                    {
+                        "role": "system", 
+                        "content": "You are a culinary expert AI. Always respond with valid JSON only."
+                    },
+                    {
+                        "role": "user", 
+                        "content": prompt
+                    }
+                ],
+                temperature=settings.AI_TEMPERATURE,
+                max_tokens=settings.AI_MAX_TOKENS,
+                seed=getattr(settings, 'AI_SEED', 42)
+            )
+            
+            result = response.choices[0].message.content.strip()
+            print(f"🤖 {operation} response received (length: {len(result)})")
+            return result
+            
+        except Exception as e:
+            print(f"❌ OpenAI API call failed for {operation}: {e}")
+            return None
+    
+    def _build_basic_categorization_prompt(self, recipe: Recipe) -> str:
+        """Build prompt for basic categorization with detailed analysis"""
         
-        # Create a clean ingredient list
-        ingredients_text = "\n".join([f"- {ing}" for ing in recipe.ingredients[:15]])  # Limit for token efficiency
+        ingredients_text = "\n".join([f"- {ing}" for ing in recipe.ingredients[:15]])
         if len(recipe.ingredients) > 15:
-            ingredients_text += f"\n... and {len(recipe.ingredients) - 15} more ingredients"
+            ingredients_text += f"\n... and {len(recipe.ingredients) - 15} more"
         
-        # Create a clean instruction summary
-        instructions_text = " ".join(recipe.instructions[:3])[:300] + "..." if recipe.instructions else "No instructions provided"
+        instructions_text = " ".join(recipe.instructions[:2])[:200] + "..." if recipe.instructions else "No instructions"
         
-        return f"""Analyze this recipe and categorize it systematically. Pay special attention to whether it should be tagged as "healthy":
+        return f"""Analyze this recipe comprehensively and categorize it. Return ONLY valid JSON.
 
-**RECIPE: {recipe.title}**
-
-**DESCRIPTION:** {recipe.description or 'No description provided'}
-
-**INGREDIENTS:**
+RECIPE: {recipe.title}
+DESCRIPTION: {recipe.description or 'No description'}
+INGREDIENTS:
 {ingredients_text}
+COOKING METHOD: {instructions_text}
 
-**COOKING METHOD:** {instructions_text}
-
-**ADDITIONAL CONTEXT:**
-- Prep time: {recipe.prep_time or 'Unknown'}
-- Cook time: {recipe.cook_time or 'Unknown'}
-- Servings: {recipe.servings or 'Unknown'}
-- Source: {recipe.source or 'Unknown'}
-
-HEALTHY ANALYSIS REQUIRED:
-Look specifically for:
-1. Does this contain vegetables as a main component? (broccoli, spinach, carrots, etc.)
-2. Does this feature lean proteins? (tofu, fish, chicken, beans, etc.)
-3. Are the cooking methods healthy? (not deep-fried, not heavy cream-based)
-4. Is this nutritionally balanced?
-
-VEGAN ANALYSIS REQUIRED:
-Check if ALL ingredients are plant-based:
-- Tofu, tempeh, vegetables, fruits, grains, legumes, nuts, seeds = VEGAN
-- Miso, soy sauce, nutritional yeast, plant oils = VEGAN
-- Gochujang (Korean chili paste), vegetable oil, scallions, eggplant = VEGAN
-- NO meat, dairy, eggs, fish, honey, gelatin = VEGAN
-- CRITICAL: Check for ANY cheese (parmesan, parmigiano, pecorino, cheddar, mozzarella, feta, etc.) - if present, tag as VEGETARIAN not VEGAN
-- CRITICAL: Check for butter, cream, milk, yogurt - if present, tag as VEGETARIAN not VEGAN
-- CRITICAL: DO NOT assume ingredients that aren't listed - only analyze what's actually in the recipe
-- If everything is plant-based, tag as VEGAN (not just vegetarian)
-- If contains dairy/eggs but no meat, tag as VEGETARIAN
-
-PARMESAN CHEESE ALERT:
-- Parmesan cheese is DAIRY and makes the recipe VEGETARIAN, not vegan
-- Parmigiano-Reggiano is DAIRY and makes the recipe VEGETARIAN, not vegan
-- Pecorino Romano is DAIRY and makes the recipe VEGETARIAN, not vegan
-- If you see these ingredients, DO NOT tag as vegan
-
-COMMON VEGAN INGREDIENTS (these are all plant-based):
-- Eggplant, gochujang, soy sauce, vegetable oil, scallions, garlic, ginger
-- Brown sugar, sesame oil, rice vinegar, vegetables, tofu, tempeh
-- If recipe only contains these types of ingredients, it should be VEGAN
-
-EASILY VEGANIZABLE CHECK:
-- If recipe is vegetarian with only 1-2 easily replaceable dairy ingredients, tag as "easily veganizable"
-- Examples: farro salad with parmesan (cheese can be omitted/replaced), pasta with butter (can use oil instead)
-- Example confidence note: "Tagged as vegetarian due to parmesan cheese, but easily veganizable by omitting or substituting with nutritional yeast or vegan parmesan"
-
-If ANY of the healthy criteria are true, tag as "healthy"!
-If ALL ingredients are plant-based, tag as "vegan"!
-
-Return ONLY a JSON object with this exact structure (pay attention to commas):
+Return this exact JSON structure:
 {{
-    "health_tags": ["tag1", "tag2"],
-    "dish_type": ["type1", "type2"],
-    "cuisine_type": ["cuisine1"],
-    "meal_type": ["meal1", "meal2"],
-    "season": ["season1"],
-    "confidence_notes": "Friendly explanation of why you chose these categories, especially explaining your healthy tag decision"
+    "health_tags": [],
+    "dish_type": [],
+    "cuisine_type": [],
+    "meal_type": [],
+    "season": [],
+    "confidence_notes": "",
+    "confidence_notes_user": ""
 }}
 
-JSON FORMATTING REQUIREMENTS:
-- CRITICAL: Include commas after every field except the last one
-- Use double quotes around all keys and string values
-- Use square brackets for arrays, even if empty: []
-- Ensure proper comma placement - missing commas will cause parsing errors
+DETAILED ANALYSIS REQUIRED:
 
-CONFIDENCE NOTES STYLE:
-- Explain your reasoning in a natural, conversational way
-- SPECIFICALLY mention why you did or didn't tag as "healthy"
-- Focus on what led you to pick specific categories
-- Be friendly and approachable, not robotic or overly formal
-- Keep it concise but informative about your choices
+HEALTH TAGS - Systematic dietary analysis (be very precise):
+- "vegan": ALL ingredients are plant-based (vegetables, grains, oils, herbs, spices, nuts, seeds)
+- "vegetarian": No meat/seafood but may contain dairy (cheese, butter, milk) or eggs
+- "healthy": Nutrient-dense ingredients (vegetables, whole grains, lean proteins, healthy fats)
+- "dairy free": No milk, cheese, butter, cream, yogurt products
 
-EXAMPLES OF GOOD CONFIDENCE NOTES WITH HEALTH AND VEGAN EXPLANATIONS:
-- "This is vegan since all ingredients (tofu, broccoli, miso, lemon) are plant-based, and healthy due to the lean protein from tofu plus nutritious vegetables. Perfect for dinner."
-- "Tagged as vegetarian and easily veganizable due to parmesan cheese, but healthy because of the nutrient-rich farro and vegetables. The parmesan can easily be omitted or replaced with nutritional yeast."
-- "This gets both vegan and healthy tags - all ingredients are plant-based and it's vegetable-forward with nutritious beans. The warming spices make it perfect for autumn."
-- "Vegetarian and easily veganizable due to the small amount of butter that could be replaced with olive oil. Still healthy thanks to the lean protein and vegetables."
+CRITICAL VEGAN VS VEGETARIAN RULES:
+- ONLY mark as "vegetarian" if you can identify SPECIFIC dairy or egg ingredients
+- Do NOT assume hidden dairy/eggs - only categorize based on listed ingredients
 
-IMPORTANT REMINDERS:
-- If ALL ingredients are plant-based, tag as VEGAN (not vegetarian)
-- Consider dish characteristics for seasonal assignment (cucumber salad = summer)
-- Only reference ingredients and cooking methods actually in the recipe
-- Be consistent - same recipe should always get same categorization
-- BE GENEROUS with the "healthy" tag - if it has good nutritional value, include it!"""
+VEGAN INGREDIENTS (100% plant-based):
+- ALL vegetables: eggplant, zucchini, tomatoes, onions, garlic, peppers, etc.
+- ALL plant oils: olive oil, vegetable oil, sunflower oil, coconut oil, avocado oil, etc.
+- ALL herbs and spices: basil, oregano, thyme, salt, pepper, etc.
+- ALL grains: rice, quinoa, farro, wheat, oats, etc.
+- ALL legumes: beans, lentils, chickpeas, etc.
+- ALL nuts and seeds: almonds, walnuts, sesame seeds, etc.
+- Vinegar, lemon juice, lime juice, wine (for cooking)
 
-    def _parse_categorization_response(self, ai_response: str, recipe_title: str) -> Optional[RecipeCategorization]:
-        """Parse AI response into RecipeCategorization object with robust JSON handling"""
+ACTUAL DAIRY/EGG INGREDIENTS (NOT vegan):
+- Cheese: "parmesan", "mozzarella", "feta", "cheddar", "goat cheese", etc.
+- Dairy: "butter", "milk", "cream", "heavy cream", "yogurt", "sour cream"
+- Eggs: "egg", "eggs", "egg whites", "mayonnaise" 
+- Other animal: "honey", "gelatin"
+
+CRITICAL ERRORS TO AVOID:
+- Olive oil is NOT dairy - it's from olives (plant-based)
+- Vegetable oil is NOT dairy - it's from plants
+- All plant oils are VEGAN, not vegetarian
+
+If ALL ingredients are clearly plant-based = "vegan" (not vegetarian)
+
+MANDATORY: If you mark a recipe as "vegetarian" (not vegan), you MUST explain in confidence_notes EXACTLY which dairy/egg ingredients you found that prevent it from being vegan. Do NOT mention plant oils as dairy.
+
+DISH TYPES - What kind of dish is this:
+- "salad": Mixed ingredients, often raw or lightly cooked, served cold/room temp
+- "main course": Substantial dish that could be a meal centerpiece
+- "side dish": Accompanies main dishes
+- "soup", "pasta", "dessert", etc.
+
+CUISINE TYPES - Cultural/regional style based on ingredients, techniques, and dish names:
+- "american": Classic American dishes (cobbler, pie, BBQ, mac and cheese, meatloaf, pancakes, cornbread, biscuits, fried chicken, apple pie, etc.)
+- "italian": pasta, olive oil, parmesan, herbs like basil, oregano, tomato-based sauces
+- "mediterranean": olive oil, lemon, herbs, fresh vegetables, feta cheese
+- "asian": soy sauce, sesame oil, ginger, rice, noodles (be specific if possible: chinese, japanese, korean, thai)
+- "mexican": cumin, cilantro, lime, peppers, tortillas, beans
+- "french": butter, cream sauces, wine, refined techniques
+- "indian": curry spices, garam masala, turmeric, coriander, basmati rice
+
+CUISINE DETECTION RULES:
+- Look at dish TYPE first: cobbler, pie, cornbread, biscuits, barbecue = american
+- Consider cooking techniques: deep-frying, grilling, baking fruit desserts = often american
+- Regional ingredients: blueberries in baked goods, pecans, maple syrup = american
+- Traditional dish names: if it's a well-known dish from a specific culture, tag accordingly
+- If no clear cultural markers, use "american" as default for simple, home-style cooking
+
+MEAL TYPES - When would this typically be eaten:
+- "lunch": Light-moderate dishes, salads, sandwiches
+- "dinner": More substantial dishes, main courses
+- "breakfast": Morning foods
+- "snack": Small portions
+- Salads can be both lunch AND dinner - include both if appropriate
+
+SEASONS - When are main ingredients in season or when is dish typically enjoyed:
+- "spring": Fresh greens, asparagus, peas, light dishes
+- "summer": Tomatoes, cucumbers, berries, cold/fresh dishes  
+- "autumn": Squash, apples, hearty warming dishes
+- "winter": Root vegetables, stews, warming comfort foods
+- Fresh salads with vegetables = typically spring/summer
+- Look at the main ingredients to determine seasonality
+
+CONFIDENCE NOTES - REQUIRED:
+Provide TWO types of explanations:
+
+confidence_notes: Detailed explanation (2-3 sentences) for developers/detailed analysis:
+- Why you chose the health tags (what made it vegetarian vs vegan, why healthy/not)
+- CRITICAL: If marked as "vegetarian", explicitly state which dairy/egg ingredients you found
+- What made you pick the dish type and cuisine
+- Why you assigned those meal types and seasons
+- Keep tone conversational and informative
+
+confidence_notes_user: Condensed version (1-2 sentences) for end users:
+- Give an interesting, digestible overview of your reasoning
+- Focus on the most notable aspects (cuisine style, health benefits, seasonality)
+- Make it engaging and informative without technical details
+- Think "what would a food enthusiast find interesting about this categorization?"
+
+EXAMPLE CONFIDENCE NOTES:
+confidence_notes: "This is a vegetarian grain salad featuring nutrient-rich farro and fresh vegetables, making it healthy. The parmesan cheese prevents it from being vegan. With Italian ingredients like parmesan and olive oil, it has Mediterranean/Italian influences. Fresh ingredients make it perfect for spring and summer meals, and it works well for both lunch and dinner."
+
+confidence_notes_user: "A healthy Mediterranean-style grain salad that's perfect for fresh spring and summer dining, featuring nutrient-rich farro and Italian flavors."
+
+EXAMPLE FOR VEGAN DISH (all plant ingredients):
+confidence_notes: "This is a vegan Mediterranean vegetable dish with all plant-based ingredients: eggplant, zucchini, tomatoes, onions, garlic, olive oil, and herbs. It's healthy due to the abundance of fresh vegetables and minimal processing. The combination of Mediterranean vegetables and French cooking technique gives it a clear French cuisine identity, perfect for summer when these vegetables are in season."
+
+EXAMPLE FOR VEGETARIAN DISH (must specify actual dairy/egg found):
+confidence_notes: "This is vegetarian due to the butter and heavy cream used in the sauce, preventing it from being vegan. The cream-based sauce and pasta make it a comforting Italian dish perfect for dinner."
+
+WRONG EXAMPLE (DO NOT DO THIS):
+confidence_notes: "This recipe is vegetarian due to potential dairy ingredients like olive oil." ← WRONG! Olive oil is plant-based and vegan!
+
+Be thorough but accurate. Return valid JSON only."""
+
+    def _build_adaptability_prompt(self, recipe: Recipe, basic_data: Dict) -> str:
+        """Build comprehensive prompt for adaptability analysis"""
         
-        print(f"🤖 DEBUG: Raw AI response for '{recipe_title}':")
-        print(f"🤖 DEBUG: {ai_response}")
-        print("🤖 DEBUG: " + "="*60)
+        health_tags = [tag.lower() for tag in basic_data.get('health_tags', [])]
+        is_vegetarian = 'vegetarian' in health_tags
+        is_vegan = 'vegan' in health_tags
+        is_healthy = 'healthy' in health_tags
         
+        ingredients_text = "\n".join([f"- {ing}" for ing in recipe.ingredients[:15]])
+        
+        return f"""Analyze if this recipe can be easily adapted. Return ONLY valid JSON.
+
+RECIPE: {recipe.title}
+CURRENT CLASSIFICATION: Health tags = {basic_data.get('health_tags', [])}
+INGREDIENTS:
+{ingredients_text}
+
+Return this exact JSON structure:
+{{
+    "easily_veganizable": false,
+    "vegan_adaptations": null,
+    "easily_vegetarianizable": false,
+    "vegetarian_adaptations": null,
+    "easily_healthified": false,
+    "healthy_adaptations": null
+}}
+
+DETAILED ADAPTABILITY ANALYSIS:
+
+VEGAN ADAPTABILITY:
+Current status: vegetarian={is_vegetarian}, vegan={is_vegan}
+Mark "easily_veganizable" as TRUE if:
+- Recipe is currently vegetarian (has dairy/eggs but no meat)
+- Contains only 1-3 easily replaceable/omittable dairy ingredients
+- Examples: parmesan cheese (can omit), butter (use oil), small amounts of cream
+- NOT easily veganizable: eggs in baking, cream-based sauces, cheese as main component
+
+If easily veganizable, provide specific instructions like:
+"Simply omit the parmesan cheese or substitute with nutritional yeast for similar umami flavor."
+"Replace the butter with olive oil or vegan butter."
+
+VEGETARIAN ADAPTABILITY:
+Mark "easily_vegetarianizable" as TRUE if:
+- Recipe contains meat/seafood that can be easily replaced
+- Examples: chicken in stir-fry (use tofu), beef in tacos (use beans)
+- NOT if already vegetarian/vegan
+
+If easily vegetarianizable, provide specific instructions like:
+"Replace the chicken with firm tofu, tempeh, or chickpeas for protein."
+
+HEALTHY ADAPTABILITY:
+Current status: healthy={is_healthy}
+Mark "easily_healthified" as TRUE if:
+- Recipe has processed/refined ingredients that can be easily swapped
+- Examples: white flour → whole wheat, sugar → natural sweeteners, fried → baked
+- NOT if already healthy
+
+If easily healthifiable, provide specific instructions like:
+"Use whole wheat flour instead of white flour and reduce sugar by half."
+
+CRITICAL RULES:
+1. If already vegan, set "easily_veganizable": false and "vegan_adaptations": null
+2. If already vegetarian/vegan, set "easily_vegetarianizable": false  
+3. If already healthy, set "easily_healthified": false
+4. Provide SPECIFIC, actionable instructions when adaptation is possible
+5. Use null (not "null" string) when no adaptations apply
+
+FOCUS ON COMMON ADAPTATIONS:
+- Cheese omission/substitution (very common and easy)
+- Butter → oil substitution
+- Meat → plant protein substitution  
+- Refined → whole grain substitution
+
+Return valid JSON only."""
+
+    def _parse_basic_response(self, response: str) -> Optional[Dict]:
+        """Parse basic categorization response"""
         try:
             # Handle JSON wrapped in code blocks
-            if "```json" in ai_response:
-                json_start = ai_response.find("```json") + 7
-                json_end = ai_response.find("```", json_start)
-                json_str = ai_response[json_start:json_end].strip()
+            if "```json" in response:
+                json_start = response.find("```json") + 7
+                json_end = response.find("```", json_start)
+                json_str = response[json_start:json_end].strip()
             else:
-                json_str = ai_response
+                json_str = response.strip()
             
-            # Try to parse JSON, with fallback for common formatting issues
-            try:
-                data = json.loads(json_str)
-                print(f"🤖 DEBUG: Parsed JSON successfully: {data}")
-            except json.JSONDecodeError as e:
-                print(f"🤖 Initial JSON parse failed: {e}")
-                print(f"🤖 Attempting to fix common JSON issues...")
-                
-                # Try to fix common issues
-                fixed_json = self._fix_common_json_issues(json_str)
-                try:
-                    data = json.loads(fixed_json)
-                    print(f"🤖 JSON fixed and parsed successfully!")
-                except json.JSONDecodeError:
-                    print(f"🤖 Could not fix JSON formatting")
-                    print(f"🤖 Raw response: {ai_response}")
-                    return None
+            data = json.loads(json_str)
             
-            # DEBUG: Check what health tags AI returned before validation
-            print(f"🤖 DEBUG: AI returned health tags: {data.get('health_tags', [])}")
-            
-            # Validate required fields
+            # Ensure required fields exist
             required_fields = ['health_tags', 'dish_type', 'cuisine_type', 'meal_type', 'season']
-            adaptation_fields = ['easily_veganizable', 'vegan_adaptations', 'easily_vegetarianizable', 'vegetarian_adaptations', 'easily_healthified', 'healthy_adaptations']
-            
             for field in required_fields:
                 if field not in data:
-                    print(f"🤖 Missing required field '{field}' in AI response")
-                    return None
+                    data[field] = []
+                elif not isinstance(data[field], list):
+                    data[field] = [data[field]] if data[field] else []
             
-            # Ensure adaptation fields exist with defaults
-            for field in adaptation_fields:
+            # Ensure confidence notes exist
+            if 'confidence_notes' not in data:
+                data['confidence_notes'] = ''
+            if 'confidence_notes_user' not in data:
+                data['confidence_notes_user'] = ''
+            
+            # Validate tags
+            data['health_tags'] = self._validate_tags(data['health_tags'], self.HEALTH_TAGS)
+            data['dish_type'] = self._validate_tags(data['dish_type'], self.DISH_TYPES)
+            data['cuisine_type'] = self._validate_tags(data['cuisine_type'], self.CUISINE_TYPES)
+            data['meal_type'] = self._validate_tags(data['meal_type'], self.MEAL_TYPES)
+            data['season'] = self._validate_tags(data['season'], self.SEASONS)
+            
+            print(f"✅ Basic categorization parsed: {data}")
+            return data
+            
+        except Exception as e:
+            print(f"❌ Error parsing basic response: {e}")
+            print(f"Raw response: {response}")
+            return None
+    
+    def _parse_adaptability_response(self, response: str) -> Dict:
+        """Parse adaptability response with fallback to empty dict"""
+        try:
+            # Handle JSON wrapped in code blocks
+            if "```json" in response:
+                json_start = response.find("```json") + 7
+                json_end = response.find("```", json_start)
+                json_str = response[json_start:json_end].strip()
+            else:
+                json_str = response.strip()
+            
+            data = json.loads(json_str)
+            
+            # Ensure all adaptability fields exist
+            adaptability_fields = [
+                'easily_veganizable', 'vegan_adaptations',
+                'easily_vegetarianizable', 'vegetarian_adaptations', 
+                'easily_healthified', 'healthy_adaptations'
+            ]
+            
+            for field in adaptability_fields:
                 if field not in data:
                     if 'easily_' in field:
                         data[field] = False
                     else:
                         data[field] = None
             
-            # Ensure all fields are lists
-            for field in required_fields:
-                if not isinstance(data[field], list):
-                    data[field] = [data[field]] if data[field] else []
+            print(f"✅ Adaptability parsed: veganizable={data.get('easily_veganizable')}")
+            return data
             
-            # Validate tags against known lists
-            data['health_tags'] = self._validate_tags(data['health_tags'], self.HEALTH_TAGS, 'health_tags')
-            data['dish_type'] = self._validate_tags(data['dish_type'], self.DISH_TYPES, 'dish_types')
-            data['cuisine_type'] = self._validate_tags(data['cuisine_type'], self.CUISINE_TYPES, 'cuisine_types')
-            data['meal_type'] = self._validate_tags(data['meal_type'], self.MEAL_TYPES, 'meal_types')
-            data['season'] = self._validate_tags(data['season'], self.SEASONS, 'seasons')
-            
-            print(f"🤖 DEBUG: After validation, health tags: {data['health_tags']}")
-            
-            # GENERIC LOGIC - Fix the underlying issues instead of hard-coding overrides
-            
-            # Step 1: Fix healthy tag detection
-            if 'healthy' not in data['health_tags']:
-                should_be_healthy = self._should_be_healthy(recipe_title, data.get('confidence_notes', ''))
-                if should_be_healthy:
-                    data['health_tags'].append('healthy')
-                    print(f"🥗 Auto-added 'healthy' tag for {recipe_title}")
-            
-            # Step 2: Fix vegan/vegetarian detection with better logic
-            current_dietary_tags = [tag for tag in data['health_tags'] if tag in ['vegan', 'vegetarian']]
-            print(f"🔍 Current dietary tags: {current_dietary_tags}")
-            
-            if not current_dietary_tags:
-                # No dietary tag assigned, check what it should be
-                print(f"🔍 No dietary tags found, checking what this recipe should be...")
-                should_be_vegan = self._should_be_vegan(recipe_title, data.get('confidence_notes', ''))
-                should_be_vegetarian = self._should_be_vegetarian(recipe_title, data.get('confidence_notes', ''))
-                
-                if should_be_vegan:
-                    data['health_tags'].append('vegan')
-                    print(f"🌱 Auto-added 'vegan' tag for {recipe_title}")
-                elif should_be_vegetarian:
-                    data['health_tags'].append('vegetarian')
-                    print(f"🥬 Auto-added 'vegetarian' tag for {recipe_title}")
-                    
-                    # Add explanation for why it's vegetarian
-                    current_notes = data.get('confidence_notes', '')
-                    if 'farro' in recipe_title.lower() and 'salad' in recipe_title.lower():
-                        additional_notes = " Tagged as vegetarian as farro salads typically contain parmesan cheese."
-                        data['confidence_notes'] = current_notes + additional_notes
-                    
-            elif 'vegetarian' in data['health_tags'] and 'vegan' not in data['health_tags']:
-                # AI marked as vegetarian, double-check if it should actually be vegan
-                print(f"🔍 Recipe marked as vegetarian, checking if it should be vegan...")
-                should_be_vegan = self._should_be_vegan(recipe_title, data.get('confidence_notes', ''))
-                if should_be_vegan:
-                    print(f"🔧 CORRECTING: Should be vegan, not vegetarian")
-                    data['health_tags'] = [tag for tag in data['health_tags'] if tag != 'vegetarian']
-                    data['health_tags'].append('vegan')
-                    print(f"🌱 Corrected to vegan tag")
-                    
-                    # Update confidence notes to explain the correction
-                    current_notes = data.get('confidence_notes', '')
-                    additional_notes = " Corrected to vegan as all ingredients are plant-based."
-                    data['confidence_notes'] = current_notes + additional_notes
-                    
-            elif 'vegan' in data['health_tags']:
-                # AI marked as vegan, double-check it's not wrong (contains dairy/meat)
-                print(f"🔍 Recipe marked as vegan, double-checking for non-vegan ingredients...")
-                definitely_not_vegan = not self._should_be_vegan(recipe_title, data.get('confidence_notes', ''))
-                if definitely_not_vegan:
-                    print(f"🔧 CORRECTING: Contains non-vegan ingredients, should be vegetarian")
-                    data['health_tags'] = [tag for tag in data['health_tags'] if tag != 'vegan']
-                    data['health_tags'].append('vegetarian')
-                    print(f"🥬 Corrected to vegetarian tag")
-                    
-                    # Update confidence notes to explain what was missed
-                    current_notes = data.get('confidence_notes', '')
-                    if 'farro' in recipe_title.lower() and 'salad' in recipe_title.lower():
-                        additional_notes = " Corrected to vegetarian as farro salads typically contain parmesan cheese."
-                    else:
-                        additional_notes = " Corrected to vegetarian due to dairy ingredients."
-                    data['confidence_notes'] = current_notes + additional_notes
-            
-            # Step 3: Fix easily veganizable detection
-            print(f"🔍 Checking for easily veganizable...")
-            print(f"🔍 Current tags: {data['health_tags']}")
-            print(f"🔍 Is vegetarian: {'vegetarian' in data['health_tags']}")
-            print(f"🔍 Is easily veganizable already present: {'easily veganizable' in data['health_tags']}")
-            
-            if 'vegetarian' in data['health_tags'] and 'easily veganizable' not in data['health_tags']:
-                print(f"🔍 Recipe is vegetarian, checking if easily veganizable...")
-                should_be_easily_veganizable = self._should_be_easily_veganizable(recipe_title, data.get('confidence_notes', ''))
-                if should_be_easily_veganizable:
-                    data['health_tags'].append('easily veganizable')
-                    data['easily_veganizable'] = True
-                    print(f"🌱✨ Auto-added 'easily veganizable' tag for {recipe_title}")
-                    
-                    # Generate appropriate vegan adaptation instructions
-                    if 'parmesan' in recipe_title.lower() or 'farro salad' in recipe_title.lower():
-                        data['vegan_adaptations'] = "Simply omit the parmesan cheese or substitute with nutritional yeast for similar umami flavor."
-                    elif 'butter' in recipe_title.lower():
-                        data['vegan_adaptations'] = "Replace the butter with olive oil or vegan butter."
-                    else:
-                        data['vegan_adaptations'] = "The dairy ingredients can be easily omitted or substituted with plant-based alternatives."
-                    
-                    print(f"🔧 Added vegan adaptation instructions: {data['vegan_adaptations']}")
-                else:
-                    print(f"❌ Did NOT add 'easily veganizable' tag for {recipe_title}")
-            else:
-                if 'vegetarian' not in data['health_tags']:
-                    print(f"🔍 Skipping easily veganizable - not vegetarian")
-                if 'easily veganizable' in data['health_tags']:
-                    print(f"🔍 Skipping easily veganizable - already present")
-            
-            print(f"🤖 DEBUG: Final health tags: {data['health_tags']}")
-            
-            # Updated: Only default to all seasons if no valid seasons were returned AND it's not a clearly seasonal dish
-            if not data['season']:
-                # Check if this might be a seasonal dish that AI missed
-                title_lower = recipe_title.lower()
-                if any(term in title_lower for term in ['cucumber', 'tomato', 'gazpacho', 'cold soup']):
-                    data['season'] = ['summer']
-                    print(f"🤖 Applied summer season based on dish characteristics: {recipe_title}")
-                elif any(term in title_lower for term in ['pumpkin', 'butternut', 'hot chocolate', 'stew']):
-                    data['season'] = ['autumn', 'winter']
-                    print(f"🤖 Applied autumn/winter season based on dish characteristics: {recipe_title}")
-                else:
-                    data['season'] = self.SEASONS.copy()
-                    print(f"🤖 No specific seasons identified, defaulting to all seasons: {recipe_title}")
-            
-            categorization = RecipeCategorization(
-                health_tags=data['health_tags'],
-                dish_type=data['dish_type'],
-                cuisine_type=data['cuisine_type'],
-                meal_type=data['meal_type'],
-                season=data['season'],
-                confidence_notes=data.get('confidence_notes', ''),
-                easily_veganizable=data.get('easily_veganizable', False),
-                vegan_adaptations=data.get('vegan_adaptations'),
-                easily_vegetarianizable=data.get('easily_vegetarianizable', False),
-                vegetarian_adaptations=data.get('vegetarian_adaptations'),
-                easily_healthified=data.get('easily_healthified', False),
-                healthy_adaptations=data.get('healthy_adaptations'),
-                ai_model=settings.AI_MODEL
-            )
-            
-            print(f"✅ AI categorization successful for {recipe_title}")
-            print(f"   Health: {categorization.health_tags}")
-            print(f"   Dish: {categorization.dish_type}")
-            print(f"   Cuisine: {categorization.cuisine_type}")
-            print(f"   Meal: {categorization.meal_type}")
-            print(f"   Season: {categorization.season}")
-            print(f"   Reasoning: {categorization.confidence_notes[:100]}...")
-            
-            return categorization
-            
-        except json.JSONDecodeError as e:
-            print(f"🤖 JSON decode error: {e}")
-            print(f"🤖 Raw response: {ai_response}")
-            return None
         except Exception as e:
-            print(f"🤖 Error parsing categorization response: {e}")
-            return None
+            print(f"⚠️ Error parsing adaptability response: {e}")
+            print(f"Raw response: {response}")
+            # Return empty adaptability data
+            return {
+                'easily_veganizable': False,
+                'vegan_adaptations': None,
+                'easily_vegetarianizable': False,
+                'vegetarian_adaptations': None,
+                'easily_healthified': False,
+                'healthy_adaptations': None
+            }
     
-    def _should_be_healthy(self, recipe_title: str, confidence_notes: str) -> bool:
-        """Check if a recipe should be tagged as healthy based on title and notes"""
-        title_lower = recipe_title.lower()
-        notes_lower = confidence_notes.lower() if confidence_notes else ""
-        
-        # Look for healthy indicators in title
-        healthy_ingredients = [
-            'tofu', 'broccoli', 'spinach', 'kale', 'quinoa', 'salmon', 'chicken breast',
-            'vegetables', 'salad', 'soup', 'beans', 'lentils', 'chickpeas', 'avocado',
-            'grilled', 'roasted', 'steamed', 'baked', 'tempeh', 'edamame'
-        ]
-        
-        healthy_phrases = [
-            'with vegetables', 'with broccoli', 'with spinach', 'and vegetables',
-            'vegetable', 'veggie', 'with kale', 'and tofu'
-        ]
-        
-        # Check title for healthy indicators
-        title_has_healthy = any(ingredient in title_lower for ingredient in healthy_ingredients)
-        title_has_healthy_phrase = any(phrase in title_lower for phrase in healthy_phrases)
-        
-        # Check if notes mention vegetables, lean protein, or vegan ingredients
-        notes_has_healthy = any(word in notes_lower for word in [
-            'vegetable', 'broccoli', 'spinach', 'lean protein', 'tofu', 'vegan', 'plant-based'
-        ])
-        
-        return title_has_healthy or title_has_healthy_phrase or notes_has_healthy
-    
-    def _should_be_vegan(self, recipe_title: str, confidence_notes: str) -> bool:
-        """Check if a recipe should be tagged as vegan based on title and notes"""
-        title_lower = recipe_title.lower()
-        notes_lower = confidence_notes.lower() if confidence_notes else ""
-        
-        # FIRST: Aggressive dairy detection - if ANY dairy is found, definitely not vegan
-        dairy_indicators = [
-            # All cheese types - be extremely comprehensive
-            'cheese', 'parmesan', 'parmigiano', 'pecorino', 'romano', 'cheddar', 
-            'mozzarella', 'feta', 'goat cheese', 'ricotta', 'cream cheese', 
-            'blue cheese', 'swiss', 'gruyere', 'brie', 'camembert', 'fontina',
-            'provolone', 'asiago', 'manchego', 'gouda', 'emmental',
-            # Other dairy
-            'butter', 'cream', 'milk', 'yogurt', 'sour cream', 'crème fraîche',
-            # Meat and seafood
-            'chicken', 'beef', 'pork', 'fish', 'salmon', 'tuna', 'shrimp', 'crab',
-            'bacon', 'ham', 'turkey', 'lamb', 'duck', 'sausage', 'meat',
-            # Eggs and other animal products
-            'egg', 'eggs', 'honey', 'gelatin', 'mayo', 'mayonnaise'
-        ]
-        
-        # Check title for non-vegan ingredients
-        detected_non_vegan = []
-        for ingredient in dairy_indicators:
-            if ingredient in title_lower:
-                detected_non_vegan.append(f"'{ingredient}' in title")
-        
-        # Check confidence notes for non-vegan ingredients  
-        for ingredient in dairy_indicators:
-            if ingredient in notes_lower:
-                detected_non_vegan.append(f"'{ingredient}' in notes")
-        
-        if detected_non_vegan:
-            print(f"🚫 Found non-vegan ingredients in '{recipe_title}': {detected_non_vegan}")
-            return False
-        
-        # Special check for common problematic recipes
-        if 'farro' in title_lower and 'salad' in title_lower:
-            print(f"⚠️ Farro salad detected - these often contain parmesan cheese")
-            # Be extra cautious with farro salads as they commonly have parmesan
-            return False
-        
-        # Special check for gochujang eggplant - this should typically be vegan
-        if 'gochujang' in title_lower and 'eggplant' in title_lower:
-            print(f"✅ Gochujang eggplant detected - typically vegan (eggplant + Korean chili paste)")
-            # These are usually just eggplant, gochujang, oil, scallions - all vegan
-            # Don't return False here, continue checking
-        
-        # Look for vegan ingredients in title only if no dairy found
-        vegan_ingredients = [
-            'tofu', 'tempeh', 'miso', 'vegetables', 'vegetable', 'beans', 'lentils', 
-            'chickpeas', 'quinoa', 'oats', 'rice', 'pasta', 'noodles', 'hummus',
-            'avocado', 'tahini', 'coconut', 'mushrooms', 'broccoli', 'spinach', 
-            'kale', 'tomato', 'garlic', 'onion', 'eggplant', 'gochujang'
-        ]
-        
-        # Check if title has vegan ingredients
-        has_vegan_ingredients = any(ingredient in title_lower for ingredient in vegan_ingredients)
-        
-        # Check if notes explicitly mention it's plant-based or vegan
-        notes_explicitly_vegan = any(phrase in notes_lower for phrase in [
-            'plant-based', 'vegan', 'all ingredients are plant', 'no animal products',
-            'contains zero animal products'
-        ])
-        
-        # Only suggest vegan if there are strong positive indicators AND no dairy found
-        result = (has_vegan_ingredients or notes_explicitly_vegan)
-        
-        if result:
-            print(f"✅ Recipe '{recipe_title}' looks vegan - no dairy detected, has vegan ingredients")
-        else:
-            print(f"❓ Recipe '{recipe_title}' unclear - not enough vegan indicators")
-            
-        return result
-    
-    def _should_be_vegetarian(self, recipe_title: str, confidence_notes: str) -> bool:
-        """Check if a recipe should be tagged as vegetarian based on title and notes"""
-        title_lower = recipe_title.lower()
-        notes_lower = confidence_notes.lower() if confidence_notes else ""
-        
-        print(f"🔍 VEGETARIAN CHECK for: '{recipe_title}'")
-        
-        # Look for vegetarian indicators (including dairy)
-        vegetarian_ingredients = [
-            'vegetables', 'vegetable', 'salad', 'pasta', 'farro', 'quinoa', 'rice',
-            'beans', 'lentils', 'chickpeas', 'cheese', 'parmesan', 'mozzarella',
-            'feta', 'goat cheese', 'cream', 'butter', 'egg', 'eggs'
-        ]
-        
-        # Meat and seafood indicators (if present, not vegetarian)
-        meat_indicators = [
-            'chicken', 'beef', 'pork', 'fish', 'salmon', 'tuna', 'shrimp', 'crab',
-            'bacon', 'ham', 'turkey', 'lamb', 'duck', 'sausage', 'meat'
-        ]
-        
-        # SPECIAL CASE: Farro salads commonly have parmesan cheese
-        if 'farro' in title_lower and 'salad' in title_lower:
-            print(f"🔧 Farro salad detected - these commonly contain parmesan cheese")
-            return True
-        
-        # Check if title has meat ingredients
-        has_meat = any(ingredient in title_lower for ingredient in meat_indicators)
-        if has_meat:
-            print(f"🚫 Found meat indicators, not vegetarian")
-            return False
-        
-        # Check if confidence notes mention meat
-        notes_has_meat = any(ingredient in notes_lower for ingredient in meat_indicators)
-        if notes_has_meat:
-            print(f"🚫 Found meat in notes, not vegetarian")
-            return False
-        
-        # Check if title has vegetarian ingredients
-        has_vegetarian_ingredients = any(ingredient in title_lower for ingredient in vegetarian_ingredients)
-        
-        # Check if notes suggest vegetarian
-        notes_suggests_vegetarian = any(phrase in notes_lower for phrase in [
-            'vegetarian', 'no meat', 'dairy', 'cheese', 'plant-based with'
-        ])
-        
-        result = (has_vegetarian_ingredients or notes_suggests_vegetarian) and not has_meat and not notes_has_meat
-        print(f"🔍 Should be vegetarian: {result}")
-        return result
-    
-    def _should_be_easily_veganizable(self, recipe_title: str, confidence_notes: str) -> bool:
-        """Check if a vegetarian recipe should be tagged as easily veganizable"""
-        title_lower = recipe_title.lower()
-        notes_lower = confidence_notes.lower() if confidence_notes else ""
-        
-        print(f"🔍 EASILY VEGANIZABLE CHECK for: '{recipe_title}'")
-        print(f"🔍 Title: '{title_lower}'")
-        print(f"🔍 Notes: '{notes_lower}'")
-        
-        # Easy to replace dairy ingredients (small amounts or optional toppings)
-        easily_replaceable_dairy = [
-            'parmesan', 'parmigiano', 'pecorino', 'romano',  # Hard cheeses (can be omitted/replaced)
-            'feta',  # Often used as garnish/topping
-            'goat cheese',  # Often used as garnish/topping
-            'butter',  # Can be replaced with oil
-            'cheese'  # Generic cheese mention
-        ]
-        
-        # Hard to replace ingredients (central to the dish)
-        hard_to_replace = [
-            'heavy cream', 'cream sauce', 'milk', 'cream cheese',  # Central to cream sauces, etc.
-            'egg', 'eggs',  # Hard to replace in baking
-            'ricotta', 'mozzarella', 'cheddar'  # Often central to the dish
-        ]
-        
-        # Check for easily replaceable dairy
-        found_replaceable = []
-        for dairy in easily_replaceable_dairy:
-            if dairy in title_lower:
-                found_replaceable.append(f"'{dairy}' in title")
-            if dairy in notes_lower:
-                found_replaceable.append(f"'{dairy}' in notes")
-        
-        # Check for hard-to-replace ingredients
-        found_hard_to_replace = []
-        for dairy in hard_to_replace:
-            if dairy in title_lower:
-                found_hard_to_replace.append(f"'{dairy}' in title")
-            if dairy in notes_lower:
-                found_hard_to_replace.append(f"'{dairy}' in notes")
-        
-        print(f"🔍 Found easily replaceable dairy: {found_replaceable}")
-        print(f"🔍 Found hard-to-replace dairy: {found_hard_to_replace}")
-        
-        # Recipe patterns that are usually easily veganizable
-        easily_veganizable_patterns = [
-            'farro salad',  # Parmesan is usually just a topping
-            'grain salad',  # Cheese usually a topping
-            'pasta salad',  # Cheese often optional
-            'grain bowl',   # Cheese usually a topping
-            'quinoa salad', # Cheese usually a topping
-            'roasted vegetables',  # Cheese usually a garnish
-            'vegetable salad'  # Cheese usually a topping
-        ]
-        
-        found_patterns = []
-        for pattern in easily_veganizable_patterns:
-            if pattern in title_lower:
-                found_patterns.append(pattern)
-        
-        print(f"🔍 Found easily veganizable patterns: {found_patterns}")
-        
-        # Check confidence notes for indicators
-        notes_suggests_easily_veganizable = any(phrase in notes_lower for phrase in [
-            'easily vegan', 'omit', 'substitute', 'replace', 'optional', 'garnish', 'topping'
-        ])
-        
-        print(f"🔍 Notes suggest easily veganizable: {notes_suggests_easily_veganizable}")
-        
-        # Logic: easily veganizable if:
-        # 1. Has easily replaceable dairy OR fits a pattern OR notes suggest it
-        # 2. AND doesn't have hard-to-replace ingredients
-        has_positive_indicators = (
-            len(found_replaceable) > 0 or 
-            len(found_patterns) > 0 or 
-            notes_suggests_easily_veganizable
-        )
-        
-        has_blocking_ingredients = len(found_hard_to_replace) > 0
-        
-        result = has_positive_indicators and not has_blocking_ingredients
-        
-        print(f"🔍 Positive indicators: {has_positive_indicators}")
-        print(f"🔍 Blocking ingredients: {has_blocking_ingredients}")
-        print(f"🔍 Should be easily veganizable: {result}")
-        
-        return result
-    
-    def _fix_common_json_issues(self, json_str: str) -> str:
-        """Attempt to fix common JSON formatting issues"""
-        import re
-        
-        # Fix missing commas before "confidence_notes"
-        json_str = re.sub(r'(\])\s*("confidence_notes")', r'\1,\n    \2', json_str)
-        
-        # Fix missing commas before any field that starts with a quote
-        json_str = re.sub(r'(\]|\})\s*("[\w_]+":)', r'\1,\n    \2', json_str)
-        
-        # Fix trailing commas before closing brace
-        json_str = re.sub(r',\s*\}', r'\n}', json_str)
-        
-        return json_str
-    
-    def _validate_tags(self, tags: List[str], valid_tags: List[str], category: str) -> List[str]:
-        """Validate and filter tags against known good tags"""
+    def _validate_tags(self, tags: List[str], valid_tags: List[str]) -> List[str]:
+        """Validate tags against known lists"""
         if not tags:
             return []
         
-        print(f"🔍 DEBUG: Validating {category} tags: {tags}")
-        print(f"🔍 DEBUG: Valid tags for {category}: {valid_tags}")
-        
-        # Convert to lowercase for comparison
         valid_tags_lower = [tag.lower() for tag in valid_tags]
         validated = []
         
         for tag in tags:
             tag_lower = tag.lower().strip()
-            print(f"🔍 DEBUG: Checking tag '{tag}' (lowercase: '{tag_lower}')")
             if tag_lower in valid_tags_lower:
-                # Find the original casing from valid_tags
                 original_tag = valid_tags[valid_tags_lower.index(tag_lower)]
                 validated.append(original_tag)
-                print(f"🔍 DEBUG: ✅ Tag '{tag}' validated as '{original_tag}'")
-            else:
-                print(f"⚠️ Invalid {category} tag ignored: '{tag}'")
-                print(f"⚠️ Available options: {valid_tags_lower}")
         
-        print(f"🔍 DEBUG: Final validated {category} tags: {validated}")
         return validated
+    
+    def _validate_adaptability_logic(self, data: Dict[str, Any], recipe_title: str, recipe_ingredients: List[str]):
+        """Enhanced validation with ingredient analysis for better accuracy"""
+        
+        health_tags = [tag.lower() for tag in data.get('health_tags', [])]
+        ingredients_text = ' '.join(recipe_ingredients).lower()
+        
+        # Rule 1: If recipe is already vegan, it shouldn't be "easily veganizable"
+        if 'vegan' in health_tags and data.get('easily_veganizable'):
+            print(f"⚠️ Logic correction: Recipe is already vegan, removing veganizable flag")
+            data['easily_veganizable'] = False
+            data['vegan_adaptations'] = None
+        
+        # Rule 2: If recipe is already vegetarian or vegan, it shouldn't be "easily vegetarianizable"  
+        if ('vegetarian' in health_tags or 'vegan' in health_tags) and data.get('easily_vegetarianizable'):
+            print(f"⚠️ Logic correction: Recipe is already vegetarian/vegan, removing vegetarianizable flag")
+            data['easily_vegetarianizable'] = False
+            data['vegetarian_adaptations'] = None
+        
+        # Rule 3: If recipe is already healthy, it shouldn't be "easily healthified"
+        if 'healthy' in health_tags and data.get('easily_healthified'):
+            print(f"⚠️ Logic correction: Recipe is already healthy, removing healthifiable flag")
+            data['easily_healthified'] = False
+            data['healthy_adaptations'] = None
+        
+        # Enhanced Rule 4: Check for incorrect vegetarian classification (should be vegan)
+        if 'vegetarian' in health_tags and 'vegan' not in health_tags:
+            print(f"🔍 DEBUGGING: Recipe marked as vegetarian, checking ingredients for dairy/eggs...")
+            print(f"🔍 DEBUGGING: Ingredients text: {ingredients_text}")
+            
+            # Check if recipe actually contains any dairy/egg ingredients
+            dairy_egg_ingredients = [
+                'cheese', 'parmesan', 'parmigiano', 'pecorino', 'romano', 'feta', 'mozzarella',
+                'cheddar', 'goat cheese', 'ricotta', 'cream cheese', 'blue cheese',
+                'butter', 'milk', 'cream', 'heavy cream', 'sour cream', 'yogurt',
+                'egg', 'eggs', 'egg white', 'egg yolk', 'mayo', 'mayonnaise', 'honey'
+            ]
+            
+            # Plant-based ingredients that AI might incorrectly think are dairy
+            plant_based_ingredients = [
+                'olive oil', 'vegetable oil', 'sunflower oil', 'coconut oil', 'avocado oil',
+                'oil', 'vinegar', 'lemon juice', 'lime juice'
+            ]
+            
+            found_dairy_eggs = []
+            found_incorrect_dairy = []
+            
+            for dairy_egg in dairy_egg_ingredients:
+                if dairy_egg in ingredients_text:
+                    found_dairy_eggs.append(dairy_egg)
+                    print(f"🔍 DEBUGGING: Found dairy/egg ingredient: '{dairy_egg}'")
+            
+            # Check if AI mentioned plant-based ingredients as dairy in confidence notes
+            confidence_notes_lower = data.get('confidence_notes', '').lower()
+            for plant_ingredient in plant_based_ingredients:
+                if plant_ingredient in confidence_notes_lower and ('dairy' in confidence_notes_lower or 'potential dairy' in confidence_notes_lower):
+                    found_incorrect_dairy.append(plant_ingredient)
+                    print(f"🔍 DEBUGGING: AI incorrectly mentioned '{plant_ingredient}' as dairy in confidence notes")
+            
+            print(f"🔍 DEBUGGING: Total actual dairy/eggs found: {found_dairy_eggs}")
+            print(f"🔍 DEBUGGING: Plant ingredients incorrectly labeled as dairy: {found_incorrect_dairy}")
+            
+            # If no actual dairy/eggs found, it should be vegan
+            if not found_dairy_eggs:
+                print(f"🔧 Auto-correction: Recipe marked as vegetarian but no dairy/eggs found in ingredients, changing to vegan")
+                if found_incorrect_dairy:
+                    print(f"🔧 AI incorrectly classified these plant ingredients as dairy: {found_incorrect_dairy}")
+                
+                # Remove vegetarian and add vegan
+                data['health_tags'] = [tag for tag in data.get('health_tags', []) if tag.lower() != 'vegetarian']
+                data['health_tags'].append('vegan')
+                # Update health_tags reference for subsequent logic
+                health_tags = [tag.lower() for tag in data.get('health_tags', [])]
+                
+                # Update confidence notes to reflect the correction
+                current_notes = data.get('confidence_notes', '')
+                if found_incorrect_dairy:
+                    correction_note = f" [Auto-corrected from vegetarian to vegan - {', '.join(found_incorrect_dairy)} are plant-based, not dairy.]"
+                else:
+                    correction_note = " [Auto-corrected from vegetarian to vegan as no dairy/egg ingredients were found in the actual ingredient list.]"
+                data['confidence_notes'] = current_notes + correction_note
+            else:
+                print(f"🔍 Vegetarian classification confirmed: found dairy/eggs: {found_dairy_eggs}")
+                
+                # Check if AI explained these ingredients in confidence notes
+                current_notes = data.get('confidence_notes', '').lower()
+                explained_ingredients = []
+                for ingredient in found_dairy_eggs:
+                    if ingredient in current_notes:
+                        explained_ingredients.append(ingredient)
+                
+                missing_explanations = [ing for ing in found_dairy_eggs if ing not in explained_ingredients]
+                if missing_explanations:
+                    print(f"⚠️ AI didn't explain these dairy/egg ingredients in confidence notes: {missing_explanations}")
+                    # Add explanation to confidence notes
+                    additional_note = f" Contains {', '.join(found_dairy_eggs)} which prevents it from being vegan."
+                    data['confidence_notes'] = data.get('confidence_notes', '') + additional_note
+        
+        # Enhanced Rule 5: Check for obvious veganizable cases AI might miss
+        if ('vegetarian' in health_tags and not data.get('easily_veganizable')):
+            # Look for easily omittable/replaceable dairy
+            easily_replaceable_dairy = [
+                'parmesan', 'parmigiano', 'pecorino', 'romano', 'feta',
+                'goat cheese', 'butter', 'grated cheese'
+            ]
+            
+            found_replaceable = []
+            for dairy in easily_replaceable_dairy:
+                if dairy in ingredients_text:
+                    found_replaceable.append(dairy)
+            
+            # Check for hard-to-replace ingredients that would prevent easy veganizing
+            hard_to_replace = [
+                'heavy cream', 'cream sauce', 'milk', 'cream cheese',
+                'egg', 'eggs', 'ricotta', 'mozzarella', 'cheddar'
+            ]
+            
+            found_hard_to_replace = []
+            for hard_dairy in hard_to_replace:
+                if hard_dairy in ingredients_text:
+                    found_hard_to_replace.append(hard_dairy)
+            
+            # If we found easily replaceable dairy and no hard-to-replace ingredients
+            if found_replaceable and not found_hard_to_replace:
+                print(f"🔧 Auto-correction: Found easily replaceable dairy ({found_replaceable}), marking as veganizable")
+                data['easily_veganizable'] = True
+                
+                # Generate appropriate adaptation instruction
+                if 'parmesan' in found_replaceable or 'pecorino' in found_replaceable:
+                    data['vegan_adaptations'] = "Simply omit the parmesan cheese or substitute with nutritional yeast for similar umami flavor."
+                elif 'butter' in found_replaceable:
+                    data['vegan_adaptations'] = "Replace the butter with olive oil or vegan butter."
+                elif 'feta' in found_replaceable or 'goat cheese' in found_replaceable:
+                    data['vegan_adaptations'] = "Omit the cheese or substitute with vegan feta or cashew-based cheese."
+                else:
+                    data['vegan_adaptations'] = f"The {found_replaceable[0]} can be easily omitted or substituted with a plant-based alternative."
+        
+        # Enhanced Rule 5: Ensure meal types include obvious cases
+        meal_types = [meal.lower() for meal in data.get('meal_type', [])]
+        dish_types = [dish.lower() for dish in data.get('dish_type', [])]
+        
+        if 'salad' in dish_types and not meal_types:
+            print(f"🔧 Auto-correction: Salad with no meal types, adding lunch and dinner")
+            data['meal_type'] = ['lunch', 'dinner']
+        elif 'salad' in dish_types and len(meal_types) == 1:
+            # If only one meal type, likely should include both lunch and dinner for salads
+            if 'lunch' in meal_types and 'dinner' not in meal_types:
+                data['meal_type'].append('dinner')
+            elif 'dinner' in meal_types and 'lunch' not in meal_types:
+                data['meal_type'].append('lunch')
+        
+        # Enhanced Rule 6: Check seasonal indicators in ingredients
+        seasons = [season.lower() for season in data.get('season', [])]
+        
+        # Spring/Summer indicators
+        fresh_summer_ingredients = [
+            'cucumber', 'tomato', 'tomatoes', 'fresh herbs', 'basil', 'arugula',
+            'spinach', 'lettuce', 'fresh', 'lemon', 'lime'
+        ]
+        
+        # Look for fresh, light ingredients that suggest spring/summer
+        found_fresh = []
+        for ingredient in fresh_summer_ingredients:
+            if ingredient in ingredients_text:
+                found_fresh.append(ingredient)
+        
+        # If we have fresh ingredients and salad, likely spring/summer
+        if found_fresh and 'salad' in dish_types and not seasons:
+            print(f"🔧 Auto-correction: Fresh salad with {found_fresh}, adding spring and summer seasons")
+            data['season'] = ['spring', 'summer']
+        elif found_fresh and 'salad' in dish_types and len(seasons) > 2:
+            # If too many seasons, narrow it down for fresh salads
+            print(f"🔧 Auto-correction: Fresh salad should be spring/summer focused")
+            data['season'] = ['spring', 'summer']
+        
+        # Enhanced Rule 8: Check for obvious American cuisine dishes that AI might miss
+        cuisine_types = [cuisine.lower() for cuisine in data.get('cuisine_type', [])]
+        title_lower = recipe_title.lower()
+        
+        # Classic American dishes/desserts
+        american_dishes = [
+            'cobbler', 'pie', 'cornbread', 'biscuits', 'pancakes', 'waffles',
+            'mac and cheese', 'meatloaf', 'fried chicken', 'barbecue', 'bbq',
+            'apple crisp', 'banana bread', 'chocolate chip', 'brownies',
+            'casserole', 'pot roast', 'chili', 'coleslaw', 'potato salad'
+        ]
+        
+        # American ingredients that suggest American cuisine
+        american_ingredients = [
+            'blueberries', 'cranberries', 'pecans', 'maple syrup', 'cornmeal',
+            'buttermilk', 'peanut butter', 'marshmallow'
+        ]
+        
+        found_american_dishes = []
+        found_american_ingredients = []
+        
+        for dish in american_dishes:
+            if dish in title_lower:
+                found_american_dishes.append(dish)
+        
+        for ingredient in american_ingredients:
+            if ingredient in ingredients_text:
+                found_american_ingredients.append(ingredient)
+        
+        # If we found American indicators but no cuisine assigned
+        if (found_american_dishes or found_american_ingredients) and not cuisine_types:
+            print(f"🔧 Auto-correction: Found American dish/ingredients ({found_american_dishes + found_american_ingredients}), adding american cuisine")
+            data['cuisine_type'] = ['american']
+        
+        # Rule 10: If adaptation flag is True but no instructions provided, add generic instruction
+        if data.get('easily_veganizable') and not data.get('vegan_adaptations'):
+            data['vegan_adaptations'] = "This recipe can be made vegan with simple ingredient substitutions."
+            print(f"🔧 Added generic vegan adaptation instruction")
+        
+        if data.get('easily_vegetarianizable') and not data.get('vegetarian_adaptations'):
+            data['vegetarian_adaptations'] = "This recipe can be made vegetarian by replacing the meat/seafood with plant-based protein."
+            print(f"🔧 Added generic vegetarian adaptation instruction")
+        
+        if data.get('easily_healthified') and not data.get('healthy_adaptations'):
+            data['healthy_adaptations'] = "This recipe can be made healthier with ingredient substitutions or cooking method changes."
+            print(f"🔧 Added generic healthy adaptation instruction")
+
+    
+    def _create_categorization(self, basic_data: Dict, adaptability_data: Dict, recipe_title: str, recipe_ingredients: List[str]) -> RecipeCategorization:
+        """Create final categorization object with enhanced validation"""
+        
+        # Import here to avoid circular imports
+        from app.models import RecipeAdaptability
+        
+        # Combine data for validation
+        combined_data = {**basic_data, **adaptability_data}
+        
+        # Apply enhanced validation logic
+        self._validate_adaptability_logic(combined_data, recipe_title, recipe_ingredients)
+        
+        # Split back out after validation
+        validated_basic = {k: v for k, v in combined_data.items() if k in ['health_tags', 'dish_type', 'cuisine_type', 'meal_type', 'season', 'confidence_notes', 'confidence_notes_user']}
+        validated_adaptability = {k: v for k, v in combined_data.items() if k in ['easily_veganizable', 'vegan_adaptations', 'easily_vegetarianizable', 'vegetarian_adaptations', 'easily_healthified', 'healthy_adaptations']}
+        
+        # Default to all seasons if none specified and no seasonal indicators found
+        if not validated_basic.get('season'):
+            validated_basic['season'] = self.SEASONS.copy()
+        
+        # Create adaptability object
+        adaptability = RecipeAdaptability(
+            easily_veganizable=validated_adaptability.get('easily_veganizable', False),
+            vegan_adaptations=validated_adaptability.get('vegan_adaptations'),
+            easily_vegetarianizable=validated_adaptability.get('easily_vegetarianizable', False),
+            vegetarian_adaptations=validated_adaptability.get('vegetarian_adaptations'),
+            easily_healthified=validated_adaptability.get('easily_healthified', False),
+            healthy_adaptations=validated_adaptability.get('healthy_adaptations')
+        )
+        
+        categorization = RecipeCategorization(
+            health_tags=validated_basic.get('health_tags', []),
+            dish_type=validated_basic.get('dish_type', []),
+            cuisine_type=validated_basic.get('cuisine_type', []),
+            meal_type=validated_basic.get('meal_type', []),
+            season=validated_basic.get('season', []),
+            confidence_notes=validated_basic.get('confidence_notes', ''),
+            confidence_notes_user=validated_basic.get('confidence_notes_user', ''),
+            adaptability=adaptability,
+            ai_model=settings.AI_MODEL
+        )
+        
+        print(f"✅ Final categorization for {recipe_title}:")
+        print(f"   Health: {categorization.health_tags}")
+        print(f"   Dish: {categorization.dish_type}")
+        print(f"   Meal: {categorization.meal_type}")
+        print(f"   Season: {categorization.season}")
+        print(f"   Adaptability: vegan={adaptability.easily_veganizable}, veg={adaptability.easily_vegetarianizable}, healthy={adaptability.easily_healthified}")
+        print(f"   Confidence: {categorization.confidence_notes[:100]}...")
+        
+        return categorization
 
 # Enhanced recipe service integration (no changes needed)
 class EnhancedRecipeService:
@@ -845,10 +721,16 @@ class EnhancedRecipeService:
                 print("❌ Base recipe parsing failed, skipping categorization")
                 return recipe
             
+            print(f"✅ Base recipe parsed: {recipe.title}")
+            print(f"   Ingredients: {len(recipe.ingredients)}")
+            
             # Step 2: Add AI categorization
+            print("🤖 Starting AI categorization...")
             categorization = await self.categorization_service.categorize_recipe(recipe)
             
             if categorization:
+                print("✅ AI categorization successful!")
+                
                 # Enhance the recipe with categorization data
                 enhanced_recipe = Recipe(
                     title=recipe.title,
@@ -860,13 +742,13 @@ class EnhancedRecipeService:
                     prep_time=recipe.prep_time,
                     cook_time=recipe.cook_time,
                     servings=recipe.servings,
-                    cuisine=recipe.cuisine,  # Keep original if any
-                    category=recipe.category,  # Keep original if any
+                    cuisine=recipe.cuisine,
+                    category=recipe.category,
                     keywords=recipe.keywords,
                     found_structured_data=recipe.found_structured_data,
-                    used_ai=True,  # Mark as AI-enhanced
-                    raw_ingredients=getattr(recipe, 'raw_ingredients', []),  # Handle missing field gracefully
-                    raw_ingredients_detailed=getattr(recipe, 'raw_ingredients_detailed', []),  # Handle missing field gracefully
+                    used_ai=True,
+                    raw_ingredients=getattr(recipe, 'raw_ingredients', []),
+                    raw_ingredients_detailed=getattr(recipe, 'raw_ingredients_detailed', []),
                     
                     # Add new categorization fields
                     health_tags=categorization.health_tags,
@@ -875,6 +757,16 @@ class EnhancedRecipeService:
                     meal_type=categorization.meal_type,
                     season=categorization.season,
                     ai_confidence_notes=categorization.confidence_notes,
+                    ai_confidence_notes_user=categorization.confidence_notes_user,
+                    
+                    # Add adaptability fields (extract from nested object)
+                    easily_veganizable=categorization.adaptability.easily_veganizable,
+                    vegan_adaptations=categorization.adaptability.vegan_adaptations,
+                    easily_vegetarianizable=categorization.adaptability.easily_vegetarianizable,
+                    vegetarian_adaptations=categorization.adaptability.vegetarian_adaptations,
+                    easily_healthified=categorization.adaptability.easily_healthified,
+                    healthy_adaptations=categorization.adaptability.healthy_adaptations,
+                    
                     ai_enhanced=True,
                     ai_model_used=categorization.ai_model
                 )
@@ -888,7 +780,12 @@ class EnhancedRecipeService:
         except Exception as e:
             print(f"❌ Enhanced recipe parsing failed: {e}")
             print(f"Traceback: {traceback.format_exc()}")
-            raise
+            # Return the base recipe if enhancement fails
+            try:
+                from app.services.recipe_service import RecipeService
+                return await RecipeService.parse_recipe_hybrid(url)
+            except:
+                raise
 
 # Batch categorization for existing recipes (no changes needed)
 class BatchCategorizationService:
@@ -948,8 +845,8 @@ class BatchCategorizationService:
             keywords=recipe.keywords,
             found_structured_data=recipe.found_structured_data,
             used_ai=True,
-            raw_ingredients=getattr(recipe, 'raw_ingredients', []),  # Handle missing field gracefully
-            raw_ingredients_detailed=getattr(recipe, 'raw_ingredients_detailed', []),  # Handle missing field gracefully
+            raw_ingredients=getattr(recipe, 'raw_ingredients', []),
+            raw_ingredients_detailed=getattr(recipe, 'raw_ingredients_detailed', []),
             
             # Enhanced fields
             health_tags=categorization.health_tags,
@@ -958,6 +855,16 @@ class BatchCategorizationService:
             meal_type=categorization.meal_type,
             season=categorization.season,
             ai_confidence_notes=categorization.confidence_notes,
+            ai_confidence_notes_user=categorization.confidence_notes_user,
+            
+            # Adaptability fields (extract from nested object)
+            easily_veganizable=categorization.adaptability.easily_veganizable,
+            vegan_adaptations=categorization.adaptability.vegan_adaptations,
+            easily_vegetarianizable=categorization.adaptability.easily_vegetarianizable,
+            vegetarian_adaptations=categorization.adaptability.vegetarian_adaptations,
+            easily_healthified=categorization.adaptability.easily_healthified,
+            healthy_adaptations=categorization.adaptability.healthy_adaptations,
+            
             ai_enhanced=True,
             ai_model_used=categorization.ai_model
         )
