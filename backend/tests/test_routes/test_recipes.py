@@ -96,7 +96,7 @@ class TestParseRecipeEndpoint:
         # Mock basic service to succeed
         with patch('app.routes.recipes.enhanced_recipe_service', mock_enhanced_service):
             with patch('app.routes.recipes.RecipeService') as mock_basic_service:
-                mock_basic_service.parse_recipe_hybrid.return_value = sample_recipe
+                mock_basic_service.parse_recipe_hybrid = AsyncMock(return_value=sample_recipe)
                 
                 response = test_client.post("/parse-recipe", json={"url": str(sample_recipe_url.url)})
         
@@ -110,7 +110,7 @@ class TestParseRecipeEndpoint:
         """Test recipe parsing when AI is not available"""
         
         with patch('app.routes.recipes.RecipeService') as mock_service:
-            mock_service.parse_recipe_hybrid.return_value = sample_recipe
+            mock_service.parse_recipe_hybrid = AsyncMock(return_value=sample_recipe)
             
             response = test_client.post("/parse-recipe", json={"url": str(sample_recipe_url.url)})
         

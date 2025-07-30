@@ -156,6 +156,10 @@ class RecipeService:
             parsed_url = urlparse(url)
             domain = parsed_url.netloc.lower()
             
+            # Return None if no domain found (invalid URL)
+            if not domain:
+                return None
+            
             # Remove www. prefix
             if domain.startswith('www.'):
                 domain = domain[4:]
