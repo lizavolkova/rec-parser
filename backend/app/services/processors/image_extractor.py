@@ -13,7 +13,7 @@ class ImageExtractor:
             return og_image.get('content')
         
         # Fallback to twitter:image
-        twitter_image = soup.find('meta', name='twitter:image')
+        twitter_image = soup.find('meta', attrs={'name': 'twitter:image'})
         if twitter_image and twitter_image.get('content'):
             return twitter_image.get('content')
         

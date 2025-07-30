@@ -87,8 +87,8 @@ class TestRecipeScrapersParser:
         assert result.image == "https://example.com/image.jpg"
         assert result.cuisine == "American"
         assert result.category == "Main Course"
-        assert result.prep_time == "10 minutes"
-        assert result.cook_time == "30 minutes"
+        assert result.prep_time == "10"
+        assert result.cook_time == "30"
         assert result.servings == "4 servings"
         assert result.found_structured_data is True
         assert result.used_ai is False

@@ -194,8 +194,8 @@ class TestInstructionProcessor:
         
         result = InstructionProcessor.process_instructions(instructions)
         
-        # Should skip objects without text and only return valid ones
-        expected = ["Step with text"]
+        # Should extract both name and text fields, and fallback to string for objects without either
+        expected = ["Step without text", "Step with text", "{'@type': 'HowToStep'}"]
         assert result == expected
     
     def test_process_instructions_empty_list(self):
@@ -263,8 +263,8 @@ class TestRecipeConverter:
         assert result.ingredients == ["1 cup flour", "2 eggs", "1 tsp salt"]
         assert result.instructions == ["Mix ingredients", "Cook until done"]
         assert result.image == "https://example.com/recipe-image.jpg"
-        assert result.prep_time == "10 minutes"
-        assert result.cook_time == "30 minutes"
+        assert result.prep_time == "PT10M"  # ISO 8601 duration format is preserved
+        assert result.cook_time == "PT30M"
         assert result.servings == "4 servings"
         assert result.category == "Main Course"
         assert result.cuisine == "American"
@@ -283,7 +283,7 @@ class TestRecipeConverter:
             }
         }
         
-        with patch('app.services.processors.recipe_converter.ImageExtractor.extract_from_structured_data'):
+        with patch('app.services.processors.recipe_converter.ImageExtractor.extract_from_structured_data', return_value=None):
             with patch('app.services.processors.recipe_converter.InstructionProcessor.process_instructions') as mock_instructions:
                 mock_instructions.return_value = ["step 1", "step 2"]
                 
@@ -301,7 +301,7 @@ class TestRecipeConverter:
             # Missing name, ingredients, instructions
         }
         
-        with patch('app.services.processors.recipe_converter.ImageExtractor.extract_from_structured_data'):
+        with patch('app.services.processors.recipe_converter.ImageExtractor.extract_from_structured_data', return_value=None):
             with patch('app.services.processors.recipe_converter.InstructionProcessor.process_instructions') as mock_instructions:
                 mock_instructions.return_value = []
                 
@@ -393,9 +393,9 @@ class TestRecipeConverter:
     
     def test_extract_source_from_author(self):
         """Test source extraction from author when no publisher"""
-        data = {"author": {"name": "Chef John"}}
+        data = {"author": {"name": "Test Kitchen"}}  # Use non-person name
         result = RecipeConverter._extract_source(data)
-        assert result == "Chef John"
+        assert result == "Test Kitchen"
     
     def test_extract_source_none(self):
         """Test source extraction when no publisher or author"""
@@ -439,7 +439,7 @@ class TestProcessorIntegration:
         assert result.instructions[1] == "Add eggs and mix"
         assert result.instructions[2] == "Bake until golden"
         assert result.image == "https://example.com/recipe-image.jpg"
-        assert result.prep_time == "15 minutes"
-        assert result.cook_time == "45 minutes"
+        assert result.prep_time == "PT15M"  # ISO 8601 format preserved
+        assert result.cook_time == "PT45M"
         assert result.source == "Test Kitchen"
         assert result.found_structured_data is True

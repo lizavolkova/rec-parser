@@ -20,6 +20,11 @@ class InstructionProcessor:
             for instr in raw_instructions:
                 if isinstance(instr, dict):
                     text = instr.get('text', instr.get('name', str(instr)))
+                elif isinstance(instr, list):
+                    # Recursively process nested lists
+                    nested_instructions = InstructionProcessor.process_instructions(instr)
+                    instructions.extend(nested_instructions)
+                    continue
                 else:
                     text = str(instr)
                 
@@ -36,7 +41,7 @@ class InstructionProcessor:
         cleaned_instructions = []
         for instruction in instructions:
             instruction = instruction.strip()
-            if len(instruction) > 10:  # Only keep substantial instructions
+            if len(instruction) > 3:  # Only keep substantial instructions (minimum 4 chars)
                 cleaned_instructions.append(instruction)
         
         return cleaned_instructions
