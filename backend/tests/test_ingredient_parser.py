@@ -67,6 +67,28 @@ class TestStructuredIngredient:
         assert ingredient.descriptors == []
         assert ingredient.confidence == 0.0
         assert not ingredient.used_fallback
+    
+    def test_structured_ingredient_with_invalid_data(self):
+        """Test StructuredIngredient with invalid data types"""
+        # Test with None values
+        ingredient = StructuredIngredient(
+            raw_ingredient="test",
+            quantity=None,
+            unit=None,
+            original_text=""
+        )
+        assert ingredient.quantity is None
+        assert ingredient.unit is None
+        
+        # Test with empty strings
+        ingredient = StructuredIngredient(
+            raw_ingredient="test",
+            quantity="",
+            unit="",
+            original_text=""
+        )
+        assert ingredient.quantity == ""
+        assert ingredient.unit == ""
 
 
 class TestFractionHandling:
@@ -634,6 +656,109 @@ class TestEdgeCases:
         assert eggplant_covered, "Eggplant vs eggs protection should be covered"
         assert milk_covered, "Plant milk protection should be covered"  
         assert butter_covered, "Nut butter protection should be covered"
+
+
+class TestIngredientParserIntegration:
+    """Integration tests using actual ingredient-parser-nlp library"""
+    
+    @pytest.mark.integration
+    def test_real_ingredient_parsing(self):
+        """Test parsing with actual ingredient-parser-nlp library"""
+        # Test common ingredients that should parse reliably
+        test_ingredients = [
+            "2 cups all-purpose flour",
+            "1 large egg",
+            "1/2 teaspoon salt",
+            "3 tablespoons olive oil"
+        ]
+        
+        results = parse_ingredients_list(test_ingredients)
+        
+        assert len(results) == 4
+        
+        # Verify flour parsing
+        flour_result = next((r for r in results if "flour" in r.raw_ingredient), None)
+        assert flour_result is not None
+        assert flour_result.quantity == "2"
+        assert flour_result.unit == "cups"
+        
+        # Verify egg parsing
+        egg_result = next((r for r in results if "egg" in r.raw_ingredient), None)
+        assert egg_result is not None
+        assert egg_result.quantity == "1"
+        
+        # Verify salt parsing
+        salt_result = next((r for r in results if "salt" in r.raw_ingredient), None)
+        assert salt_result is not None
+        assert salt_result.quantity == "½"  # Should convert to unicode
+        assert salt_result.unit == "teaspoon"
+    
+    @pytest.mark.integration
+    def test_dietary_misparse_protection_integration(self):
+        """Test dietary misparsing protection with real parsing"""
+        # Test eggplant vs eggs issue
+        eggplant_ingredients = ["2 medium eggplant, diced"]
+        results = parse_ingredients_list(eggplant_ingredients)
+        
+        assert len(results) == 1
+        result = results[0]
+        
+        # Should use fallback to preserve "eggplant" in raw text
+        assert "eggplant" in result.raw_ingredient.lower()
+        assert result.used_fallback is True  # Should trigger protection
+    
+    @pytest.mark.integration
+    def test_ingredient_consolidation_integration(self):
+        """Test ingredient consolidation with real parsing"""
+        # Test consolidation of similar ingredients
+        test_ingredients = [
+            "2 cups flour",
+            "1 cup all-purpose flour",
+            "3 large eggs",
+            "1 egg"
+        ]
+        
+        results = parse_ingredients_list(test_ingredients)
+        
+        # Should consolidate flour entries
+        flour_results = [r for r in results if "flour" in r.raw_ingredient.lower()]
+        assert len(flour_results) <= 2  # Should consolidate some flour entries
+        
+        # Should consolidate egg entries
+        egg_results = [r for r in results if "egg" in r.raw_ingredient.lower()]
+        assert len(egg_results) == 1  # Should consolidate to single eggs entry
+    
+    @pytest.mark.integration
+    @pytest.mark.slow
+    def test_complex_recipe_parsing(self):
+        """Test parsing a complex recipe with many ingredients"""
+        complex_ingredients = [
+            "2 pounds ground beef",
+            "1 large onion, diced",
+            "3 cloves garlic, minced",
+            "2 cans (14.5 oz each) diced tomatoes",
+            "1 can (6 oz) tomato paste",
+            "2 teaspoons dried oregano",
+            "1 teaspoon dried basil",
+            "1/2 teaspoon salt",
+            "1/4 teaspoon black pepper",
+            "2 cups shredded mozzarella cheese"
+        ]
+        
+        results = parse_ingredients_list(complex_ingredients)
+        
+        # Should parse most ingredients successfully
+        assert len(results) >= 8  # Allow for some consolidation
+        
+        # Check that complex ingredients are handled
+        tomato_results = [r for r in results if "tomato" in r.raw_ingredient.lower()]
+        assert len(tomato_results) >= 1  # Should identify tomato products
+        
+        # Check quantity parsing for complex quantities
+        beef_result = next((r for r in results if "beef" in r.raw_ingredient.lower()), None)
+        if beef_result and not beef_result.used_fallback:
+            assert beef_result.quantity == "2"
+            assert beef_result.unit in ["pounds", "lbs", "pound"]
 
 
 if __name__ == "__main__":

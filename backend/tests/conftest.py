@@ -154,4 +154,27 @@ def sample_structured_ingredients() -> list[StructuredIngredient]:
 
 @pytest.fixture
 def mock_requests():
-    """Mock requests for web"""
+    """Mock requests for web scraping tests"""
+    with patch('requests.get') as mock_get:
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.text = '<html><body>Mock HTML content</body></html>'
+        mock_response.content = mock_response.text.encode()
+        mock_response.raise_for_status = Mock()
+        mock_get.return_value = mock_response
+        yield mock_get
+
+
+@pytest.fixture
+def test_client():
+    """Shared test client fixture for FastAPI application"""
+    from main import app
+    from fastapi.testclient import TestClient
+    return TestClient(app)
+
+
+@pytest.fixture
+def sample_recipe_url():
+    """Shared sample recipe URL for testing"""
+    from app.models import RecipeURL
+    return RecipeURL(url="https://example.com/recipe")

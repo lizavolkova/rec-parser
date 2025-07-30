@@ -11,26 +11,22 @@ from datetime import datetime
 from app.models import HealthResponse
 
 
-@pytest.fixture
-def client():
-    """Create test client for the app"""
-    from main import app
-    return TestClient(app)
+# Use shared test_client fixture from conftest.py
 
 
 class TestHealthRoutes:
     """Test health check endpoints"""
     
-    def test_read_root(self, client):
+    def test_read_root(self, test_client):
         """Test basic hello world endpoint returns correct message"""
-        response = client.get("/")
+        response = test_client.get("/")
         
         assert response.status_code == 200
         assert response.json() == {"message": "Hello, AI-Enhanced Recipe Parser!"}
     
     @patch('app.routes.health.openai_client')
     @patch('app.routes.health.settings')
-    def test_health_check_with_ai_available(self, mock_settings, mock_openai_client, client):
+    def test_health_check_with_ai_available(self, mock_settings, mock_openai_client, test_client):
         """Test health check when AI is available"""
         # Mock AI being available
         mock_openai_client = Mock()
@@ -38,7 +34,7 @@ class TestHealthRoutes:
         
         with patch('app.routes.health.openai_client', mock_openai_client):
             with patch('app.routes.health.settings', mock_settings):
-                response = client.get("/health")
+                response = test_client.get("/health")
         
         assert response.status_code == 200
         data = response.json()
@@ -54,11 +50,11 @@ class TestHealthRoutes:
     
     @patch('app.routes.health.openai_client', None)
     @patch('app.routes.health.settings')
-    def test_health_check_without_ai(self, mock_settings, client):
+    def test_health_check_without_ai(self, mock_settings, test_client):
         """Test health check when AI is not available"""
         mock_settings.AI_MODEL = "gpt-4o-mini"
         
-        response = client.get("/health")
+        response = test_client.get("/health")
         
         assert response.status_code == 200
         data = response.json()

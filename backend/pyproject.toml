@@ -13,6 +13,11 @@ pydantic = ">=2.11.7,<3.0.0"
 requests = ">=2.32.4,<3.0.0"
 beautifulsoup4 = ">=4.13.4,<5.0.0"
 ingredient-parser-nlp = "^2.1.1"
+httpx = "^0.28.1"
+python-dotenv = "^1.1.1"
+recipe-scrapers = "^15.8.0"
+extruct = "^0.18.0"
+openai = "^1.97.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.4.1"
