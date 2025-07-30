@@ -1,9 +1,11 @@
 # simple_test.py - Quick test for AI categorization
 import asyncio
+import pytest
 from dotenv import load_dotenv
 
 load_dotenv()
 
+@pytest.mark.asyncio
 async def test_simple():
     try:
         from app.models import Recipe
