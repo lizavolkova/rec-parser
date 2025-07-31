@@ -12,6 +12,10 @@ from fastapi import HTTPException
 from app.services.recipe_service import RecipeService
 from app.models import Recipe, DebugInfo, StructuredIngredient
 
+# Test constants
+MOCK_HTML_CONTENT = "<html>test content</html>"
+MOCK_HTML_SIMPLE = "<html>test</html>"
+
 
 @pytest.fixture
 def recipe_service():
@@ -292,7 +296,7 @@ class TestDebugRecipe:
     def test_debug_recipe_success(self, mock_extract_image, mock_fetch_page, mock_soup):
         """Test successful recipe debugging"""
         mock_response = Mock()
-        mock_response.content = b"<html>test content</html>"
+        mock_response.content = MOCK_HTML_CONTENT.encode()
         mock_fetch_page.return_value = (mock_response, mock_soup)
         mock_extract_image.return_value = "https://example.com/image.jpg"
         
@@ -449,8 +453,8 @@ class TestIntegration:
         # Mock all external dependencies
         with patch.object(RecipeService, '_fetch_page') as mock_fetch:
             mock_response = Mock()
-            mock_response.text = "<html>test</html>"
-            mock_soup = BeautifulSoup("<html>test</html>", 'html.parser')
+            mock_response.text = MOCK_HTML_SIMPLE
+            mock_soup = BeautifulSoup(MOCK_HTML_SIMPLE, 'html.parser')
             mock_fetch.return_value = (mock_response, mock_soup)
             
             with patch('app.services.recipe_service.ImageExtractor.extract_og_image', return_value="https://example.com/image.jpg"):

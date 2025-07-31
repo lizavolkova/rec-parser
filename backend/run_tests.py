@@ -18,7 +18,14 @@ from pathlib import Path
 def run_command(cmd: list[str]) -> int:
     """Run a command and return its exit code"""
     print(f"Running: {' '.join(cmd)}")
-    return subprocess.run(cmd).returncode
+    try:
+        return subprocess.run(cmd).returncode
+    except FileNotFoundError as e:
+        print(f"❌ Command not found: {e}")
+        return 1
+    except subprocess.SubprocessError as e:
+        print(f"❌ Command failed: {e}")
+        return 1
 
 def main():
     parser = argparse.ArgumentParser(description="Run tests for Recipe Parser API")
