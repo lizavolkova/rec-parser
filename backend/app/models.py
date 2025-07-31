@@ -2,6 +2,18 @@
 from pydantic import BaseModel, HttpUrl, Field
 from typing import Optional, List
 from datetime import datetime
+from dataclasses import dataclass, field
+
+@dataclass
+class StructuredIngredient:
+    """Represents a fully parsed ingredient with all components"""
+    raw_ingredient: str          # For recipe search/filtering: "flour", "butter"
+    quantity: Optional[str] = None      # For shopping lists: "3", "1/2"  
+    unit: Optional[str] = None          # For shopping lists: "cups", "tsp"
+    descriptors: List[str] = field(default_factory=list)  # For context: ["fresh", "chopped", "room temperature"]
+    original_text: str = ""      # Original: "3 cups all-purpose flour, sifted"
+    confidence: float = 0.0      # How confident the parser is
+    used_fallback: bool = False  # Whether we fell back to original text
 
 class RecipeURL(BaseModel):
     """Request model for recipe URL parsing"""

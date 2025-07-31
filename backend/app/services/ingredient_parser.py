@@ -4,23 +4,12 @@ Includes ALL original functionality + bug fixes for the consolidation issue
 """
 
 from typing import List, Optional, Dict, Any
-from dataclasses import dataclass, field
 from fractions import Fraction
 import re
 from ingredient_parser import parse_ingredient
 
-
-@dataclass
-class StructuredIngredient:
-    """Represents a fully parsed ingredient with all components"""
-    raw_ingredient: str          # For recipe search/filtering: "flour", "butter"
-    quantity: Optional[str]      # For shopping lists: "3", "1/2"  
-    unit: Optional[str]          # For shopping lists: "cups", "tsp"
-    descriptors: List[str] = field(default_factory=list)  # For context: ["fresh", "chopped", "room temperature"]
-    original_text: str = ""      # Original: "3 cups all-purpose flour, sifted"
-    confidence: float = 0.0      # How confident the parser is
-    used_fallback: bool = False  # Whether we fell back to original text
-
+# Import StructuredIngredient from models
+from app.models import StructuredIngredient
 
 # Unicode fraction mappings (bidirectional)
 UNICODE_TO_FRACTION = {
@@ -105,14 +94,17 @@ DIETARY_MISPARSE_PATTERNS = [
 
 def normalize_fractions_for_parsing(text: str) -> str:
     """Convert unicode fractions to text fractions for ML parsing"""
+    # Handle mixed numbers first (digit followed by fraction)
     for unicode_frac, text_frac in UNICODE_TO_FRACTION.items():
+        # Add space for mixed numbers like "2⅓" -> "2 1/3"
+        text = re.sub(f'(\\d){re.escape(unicode_frac)}', f'\\1 {text_frac}', text)
+        # Handle standalone fractions
         text = text.replace(unicode_frac, text_frac)
-    
+
     # Fix spacing issues like "1/2-inch" -> "1/2 inch"
     text = re.sub(r'(\d+/\d+)-', r'\1 ', text)
-    
-    return text
 
+    return text
 
 def convert_to_unicode_fraction(fraction_str: str) -> str:
     """Convert text fractions to unicode and improper fractions to mixed numbers"""
